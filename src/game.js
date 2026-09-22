@@ -291,13 +291,14 @@ function nameSprite(text, color) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false });
-  // Un mip más nítido: el muestreo por defecto dejaba las letras borrosas.
+  // El include todavía no está expandido acá. Un mip más nítido evita letras borrosas.
   mat.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
-      "vec4 sampledDiffuseColor = texture2D( map, vMapUv );",
-      "vec4 sampledDiffuseColor = texture2D( map, vMapUv, -0.85 );",
+      "#include <map_fragment>",
+      "vec4 sampledDiffuseColor = texture2D( map, vMapUv, -1.15 );\n\tdiffuseColor *= sampledDiffuseColor;",
     );
   };
+  mat.customProgramCacheKey = () => "name-sprite-sharp";
   const sprite = new THREE.Sprite(mat);
   sprite.center.set(0.5, 0);
   sprite.renderOrder = 10;
