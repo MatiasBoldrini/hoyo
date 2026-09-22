@@ -13,6 +13,7 @@ const hint = document.querySelector("#hint");
 const toast = document.querySelector("#toast");
 const nick = document.querySelector("#nick");
 const colors = document.querySelector("#colors");
+const swatch = document.querySelector("#color-swatch");
 const play = document.querySelector("#play");
 const again = document.querySelector("#again");
 const endTitle = document.querySelector("#end-title");
@@ -23,19 +24,70 @@ const saved = localStorage.getItem("hoyo-name");
 if (saved && saved !== "Jugador") nick.value = saved;
 let color = Number(localStorage.getItem("hoyo-color") || PLAYER_COLORS[0]);
 
+function colorHex(value) {
+  return `#${value.toString(16).padStart(6, "0")}`;
+}
+
+function paintSwatch() {
+  swatch.style.background = colorHex(color);
+}
+
+function placeColors() {
+  const anchor = swatch.getBoundingClientRect();
+  const pop = colors.getBoundingClientRect();
+  const gap = 10;
+  let left = anchor.left;
+  let top = anchor.top - gap - pop.height;
+  left = Math.max(12, Math.min(left, window.innerWidth - pop.width - 12));
+  top = Math.max(12, top);
+  colors.style.left = `${left}px`;
+  colors.style.top = `${top}px`;
+}
+
+function setColorsOpen(open) {
+  colors.hidden = !open;
+  swatch.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) placeColors();
+}
+
+swatch.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setColorsOpen(colors.hidden);
+});
+
 for (const value of PLAYER_COLORS) {
   const button = document.createElement("button");
   button.type = "button";
-  button.style.background = `#${value.toString(16).padStart(6, "0")}`;
+  button.style.background = colorHex(value);
+  button.setAttribute("aria-label", "Color");
   button.classList.toggle("on", value === color);
-  button.addEventListener("click", () => {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
     color = value;
     localStorage.setItem("hoyo-color", String(value));
     for (const node of colors.children) node.classList.remove("on");
     button.classList.add("on");
+    paintSwatch();
+    setColorsOpen(false);
   });
   colors.append(button);
 }
+
+paintSwatch();
+
+document.addEventListener("pointerdown", (event) => {
+  if (colors.hidden) return;
+  if (event.target === swatch || colors.contains(event.target)) return;
+  setColorsOpen(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setColorsOpen(false);
+});
+
+window.addEventListener("resize", () => {
+  if (!colors.hidden) placeColors();
+});
 
 const game = await mountGame(canvas, {
   onReady() {
@@ -277,9 +329,34 @@ nick.addEventListener("keydown", (event) => {
 window.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !menu.hidden) begin();
 });
-window.addEventListener("pointermove", (event) => {
-  if (menu.hidden && end.hidden) game.setPointer(event.clientX, event.clientY);
+// Con el mouse, mantener el click y arrastrar gira la cámara. Mientras tanto el
+// objetivo queda fijo en pantalla, así el hoyo sigue en la misma dirección relativa.
+// En pantallas táctiles el dedo siempre maneja el hoyo.
+let turnFrom = null;
+
+window.addEventListener("pointerdown", (event) => {
+  if (event.pointerType !== "mouse" || event.button !== 0 || !menu.hidden || !end.hidden) return;
+  turnFrom = event.clientX;
+  document.body.classList.add("turning");
 });
+
+window.addEventListener("pointermove", (event) => {
+  if (!menu.hidden || !end.hidden) return;
+  if (turnFrom !== null) {
+    game.rotateCamera(-(event.clientX - turnFrom) * 0.006);
+    turnFrom = event.clientX;
+    return;
+  }
+  game.setPointer(event.clientX, event.clientY);
+});
+
+function stopTurning() {
+  turnFrom = null;
+  document.body.classList.remove("turning");
+}
+window.addEventListener("pointerup", stopTurning);
+window.addEventListener("pointercancel", stopTurning);
+window.addEventListener("blur", stopTurning);
 
 game.onEnd = (result) => {
   hud.hidden = true;

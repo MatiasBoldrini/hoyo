@@ -31,6 +31,11 @@ canvas {
   height: 100%;
 }
 
+body.turning,
+body.turning canvas {
+  cursor: grabbing;
+}
+
 #danger {
   pointer-events: none;
   position: fixed;
@@ -210,9 +215,46 @@ h2 {
   color: #5c6778;
 }
 
+.name-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 6px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.nick {
+  display: contents;
+}
+
+.nick label {
+  grid-column: 2;
+  grid-row: 1;
+  padding-left: 16px;
+}
+
+.color-swatch {
+  grid-column: 1;
+  grid-row: 2;
+  width: 34px;
+  height: 34px;
+  border: 3px solid white;
+  border-radius: 50%;
+  padding: 0;
+  box-shadow: 0 0 0 2px #c5ced8;
+  cursor: pointer;
+}
+
+.color-swatch[aria-expanded="true"] {
+  box-shadow: 0 0 0 3px var(--ink);
+}
+
 .field input {
+  grid-column: 2;
+  grid-row: 2;
   width: 100%;
-  margin-top: 6px;
+  margin-top: 0;
   border: 0;
   border-radius: 14px;
   padding: 14px 16px;
@@ -220,7 +262,7 @@ h2 {
   font-size: 18px;
   font-weight: 800;
   color: var(--ink);
-  background: #eef2f6;
+  background: #fff4c2;
   outline: none;
 }
 
@@ -229,24 +271,31 @@ h2 {
   font-weight: 700;
 }
 
-.colors {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  margin: 16px 0 18px;
+.color-pop {
+  position: fixed;
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(4, 32px);
+  gap: 10px;
+  width: max-content;
+  margin: 0;
+  padding: 12px;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 16px 40px rgba(20, 40, 70, 0.28);
 }
 
-.colors button {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+.color-pop button {
+  width: 32px;
+  height: 32px;
   border: 3px solid white;
-  box-shadow: 0 0 0 2px transparent;
+  border-radius: 50%;
   padding: 0;
+  box-shadow: 0 0 0 2px transparent;
   cursor: pointer;
 }
 
-.colors button.on {
+.color-pop button.on {
   box-shadow: 0 0 0 3px var(--ink);
 }
 

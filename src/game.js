@@ -81,8 +81,20 @@ function grassTexture() {
   return tex;
 }
 
+// Requiere uHoleXZR declarado antes. Un hoyo dentro del radio exterior de otro mayor
+// queda tapado: no se dibuja ni abre el piso, así no queda un agujero al cielo.
+const COVER_GLSL = `
+bool coveredBy(vec2 p, float selfR) {
+  for (int j = 0; j < 10; j++) {
+    float hj = uHoleXZR[j].z;
+    if (hj > selfR * 1.04 && distance(p, uHoleXZR[j].xy) < hj * 1.06) return true;
+  }
+  return false;
+}
+`;
+
 function enableHoleClip(material, disc = 0) {
-  material.customProgramCacheKey = () => "hole-clip-v2";
+  material.customProgramCacheKey = () => "hole-clip-v3";
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uHoleXZR = { value: holeXZR };
     shader.uniforms.uDisc = { value: disc };
@@ -95,7 +107,8 @@ function enableHoleClip(material, disc = 0) {
         `#include <common>
 varying vec3 vWorldHole;
 uniform vec3 uHoleXZR[10];
-uniform float uDisc;`,
+uniform float uDisc;
+${COVER_GLSL}`,
       )
       .replace(
         "#include <tonemapping_fragment>",
@@ -106,9 +119,11 @@ for (int i = 0; i < 10; i++) {
   float hr = uHoleXZR[i].z;
   if (hr > 0.0) {
     float hd = distance(vWorldHole.xz, uHoleXZR[i].xy);
-    if (hd < hr * 0.9) discard;
-    float rim = smoothstep(hr * 1.45 + 0.3, hr * 1.02, hd);
-    holeShade = min(holeShade, mix(1.0, 0.58, rim * rim));
+    if (hd < hr * 1.45 + 0.3 && !coveredBy(vWorldHole.xz, hr)) {
+      if (hd < hr * 0.9) discard;
+      float rim = smoothstep(hr * 1.45 + 0.3, hr * 1.02, hd);
+      holeShade = min(holeShade, mix(1.0, 0.58, rim * rim));
+    }
   }
 }
 gl_FragColor.rgb *= holeShade;
@@ -287,16 +302,19 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Un hoyo más grande tapa al chico: el fragmento se descarta si cae dentro del radio exterior del mayor.
+// Un hoyo más grande tapa al chico: el fragmento se descarta si su línea de visión
+// entra al hoyo dentro del radio exterior del mayor. Se proyecta al piso desde la cámara
+// porque la pared del fondo, vista por la parte libre de la boca, puede quedar bajo el mayor.
 const COVER_DECL = `
 uniform vec3 uHoleXZR[10];
 uniform float uSelfR;
+uniform vec3 uCam;
+${COVER_GLSL}
 `;
 const COVER_DISCARD = `
-for (int i = 0; i < 10; i++) {
-  float hr = uHoleXZR[i].z;
-  if (hr > uSelfR * 1.04 && distance(vCoverWorld.xz, uHoleXZR[i].xy) < hr * 1.06) discard;
-}
+vec2 coverAt = vCoverWorld.xz;
+if (vCoverWorld.y < -0.01) coverAt = uCam.xz + (uCam.y / max(0.35, uCam.y - vCoverWorld.y)) * (vCoverWorld.xz - uCam.xz);
+if (coveredBy(coverAt, uSelfR)) discard;
 `;
 
 let rimCoverSerial = 0;
@@ -312,11 +330,12 @@ function rimMaterial(color) {
     emissive: tint.clone().multiplyScalar(0.26),
     transparent: true,
   });
-  const key = `rim-cover-v1-${rimCoverSerial++}`;
+  const key = `rim-cover-v2-${rimCoverSerial++}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHoleXZR = { value: holeXZR };
     shader.uniforms.uSelfR = uSelfR;
+    shader.uniforms.uCam = pitCam;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vCoverWorld;")
       .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCoverWorld = worldPosition.xyz;");
@@ -339,6 +358,7 @@ function wallMaterial(color) {
       uBand: { value: 0.3 },
       uSelfR: { value: START_R },
       uHoleXZR: { value: holeXZR },
+      uCam: pitCam,
     },
     vertexShader: `
       varying float vH;
@@ -381,6 +401,7 @@ function mouthMaterial() {
     uniforms: {
       uSelfR: { value: START_R },
       uHoleXZR: { value: holeXZR },
+      uCam: pitCam,
     },
     vertexShader: `
       varying vec2 vLocal;
@@ -461,6 +482,8 @@ export async function mountGame(canvas, hooks) {
   let toast = "";
   let toastUntil = 0;
   let camOrbit = 0.4;
+  let camYaw = 0;
+  let camYawGoal = 0;
   let shake = 0;
   let player = null;
   const pointer = new THREE.Vector2();
@@ -520,6 +543,8 @@ export async function mountGame(canvas, hooks) {
     toast = "";
     sfx.resume();
     sfx.begin();
+    camYaw = 0;
+    camYawGoal = 0;
     followCamera(0, true);
     followSun(true);
   }
@@ -626,7 +651,7 @@ export async function mountGame(canvas, hooks) {
     for (const obj of objects) {
       if (!obj.batch || (!obj.inView && obj.fade === 1)) continue;
       const blocks =
-        obj.state === "idle" && player.radius < obj.eatR * 0.9 && coversHole(obj, holeBox, holeReach);
+        obj.state === "idle" && !fitsMouth(player, obj) && coversHole(obj, holeBox, holeReach);
       const target = blocks ? 0.3 : 1;
       let next = THREE.MathUtils.damp(obj.fade, target, 10, dt);
       if (Math.abs(next - target) < 0.01) next = target;
@@ -729,7 +754,7 @@ export async function mountGame(canvas, hooks) {
     let bestScore = -Infinity;
     for (const obj of objects) {
       if (obj.state !== "idle") continue;
-      if (hole.radius < obj.eatR * 0.9) continue;
+      if (!fitsMouth(hole, obj)) continue;
       const d = Math.hypot(obj.x - hole.x, obj.z - hole.z);
       if (d > 42) continue;
       const value = (obj.mass * hole.skill) / (d + 2);
@@ -748,6 +773,11 @@ export async function mountGame(canvas, hooks) {
   let probeDirZ = 0;
   let probeEdible = false;
 
+  // Entra si su huella cabe en el vacío negro, no en el aro de color.
+  function fitsMouth(hole, obj) {
+    return hole.radius * MOUTH >= obj.fitR;
+  }
+
   function probeHoles(obj) {
     probeEater = null;
     probeForce = 0;
@@ -759,7 +789,7 @@ export async function mountGame(canvas, hooks) {
       const near = hole.radius + obj.eatR;
       if (dx > near || dx < -near || dz > near || dz < -near) continue;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      const edible = hole.radius >= obj.eatR * 0.9;
+      const edible = fitsMouth(hole, obj);
       if (edible && dist <= hole.radius * MOUTH) {
         if (dist < eaterDist) {
           eaterDist = dist;
@@ -767,9 +797,11 @@ export async function mountGame(canvas, hooks) {
         }
         continue;
       }
-      const reach = hole.radius + obj.solidR * 0.8;
+      // Se inclina recién cuando su huella se asoma al vacío, no al tocar el aro.
+      const mouth = hole.radius * MOUTH;
+      const reach = mouth + obj.fitR * 0.8;
       if (dist >= reach) continue;
-      const size = edible ? 1 : hole.radius / (obj.eatR * 0.9);
+      const size = edible ? 1 : mouth / obj.fitR;
       if (size < 0.3) continue;
       const force = (1 - dist / reach) * size;
       if (force <= probeForce) continue;
@@ -922,7 +954,7 @@ export async function mountGame(canvas, hooks) {
       const depth = 0.7 + hole.radius * 1.7;
       const sunk = THREE.MathUtils.clamp(-obj.y, 0, depth);
       const wall = hole.radius * (PIT_TOP - (PIT_TOP - PIT_BOTTOM) * (sunk / depth));
-      const allowed = Math.max(0, wall - (obj.eatR + obj.solidR) * 0.5);
+      const allowed = Math.max(0, wall - obj.fitR);
       const offX = obj.x - hole.x;
       const offZ = obj.z - hole.z;
       const reach = Math.hypot(offX, offZ);
@@ -1107,15 +1139,20 @@ export async function mountGame(canvas, hooks) {
     const focus = player || { x: 0, z: 0, radius };
     const back = 9.2 + radius * 1.85;
     const height = 12.4 + radius * 2.15;
+    const ahead = 2.8 + radius * 0.42;
     shake *= Math.pow(0.92, dt * 60);
+    // Solo gira alrededor del hoyo: la altura y la inclinación no cambian.
+    camYaw = snap ? camYawGoal : THREE.MathUtils.damp(camYaw, camYawGoal, 14, dt);
+    const sx = Math.sin(camYaw);
+    const cz = Math.cos(camYaw);
     desired.set(
-      focus.x + Math.sin(timeU.value * 31) * shake,
+      focus.x + sx * back + Math.sin(timeU.value * 31) * shake,
       height,
-      focus.z + back + Math.cos(timeU.value * 27) * shake * 0.6,
+      focus.z + cz * back + Math.cos(timeU.value * 27) * shake * 0.6,
     );
     if (snap) camera.position.copy(desired);
     else camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    look.set(focus.x, 0, focus.z - (2.8 + radius * 0.42));
+    look.set(focus.x - sx * ahead, 0, focus.z - cz * ahead);
     camera.lookAt(look);
     camera.updateMatrixWorld();
     pitCam.value.copy(camera.position);
@@ -1454,6 +1491,9 @@ export async function mountGame(canvas, hooks) {
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       pointerReady = true;
     },
+    rotateCamera(radians) {
+      camYawGoal += radians;
+    },
     onEnd: null,
     destroy() {
       window.removeEventListener("resize", onResize);
@@ -1676,13 +1716,14 @@ function blobMaterial() {
       #include <common>
       #include <fog_pars_fragment>
       uniform vec3 uHoleXZR[10];
+      ${COVER_GLSL}
       varying vec2 vDisc;
       varying float vShade;
       varying vec3 vWorld;
       void main() {
         for (int i = 0; i < 10; i++) {
           float hr = uHoleXZR[i].z;
-          if (hr > 0.0 && distance(vWorld.xz, uHoleXZR[i].xy) < hr) discard;
+          if (hr > 0.0 && distance(vWorld.xz, uHoleXZR[i].xy) < hr && !coveredBy(vWorld.xz, hr)) discard;
         }
         float r = dot(vDisc, vDisc);
         float a = (1.0 - smoothstep(0.12, 1.0, r)) * vShade;
@@ -1830,6 +1871,9 @@ function addObj(scene, objects, prop, x, z, yaw, motion = null) {
     credited: false,
     fade: 1,
     inView: true,
+    // Radio de huella: promedio entre el semieje largo y el corto, así un auto
+    // alargado entra antes que una casa cuadrada del mismo largo.
+    fitR: (prop.eatR + prop.solidR) * 0.5,
     homeX: x,
     homeZ: z,
     homeYaw: yaw,
@@ -1865,11 +1909,12 @@ function seaMaterial() {
       uniform float uShore;
       uniform float uOuter;
       uniform vec3 uHoleXZR[10];
+      ${COVER_GLSL}
       varying vec3 vWorld;
       void main() {
         for (int i = 0; i < 10; i++) {
           float hr = uHoleXZR[i].z;
-          if (hr > 0.0 && distance(vWorld.xz, uHoleXZR[i].xy) < hr * 0.96) discard;
+          if (hr > 0.0 && distance(vWorld.xz, uHoleXZR[i].xy) < hr * 0.96 && !coveredBy(vWorld.xz, hr)) discard;
         }
         float r = length(vWorld.xz);
         float shore = smoothstep(uIsland + 2.0, uShore + 18.0, r);

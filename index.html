@@ -19,20 +19,34 @@
       <div id="timer">2:00</div>
       <canvas id="minimap" width="256" height="256"></canvas>
       <ol id="board"></ol>
-      <p id="hint">El hoyo sigue al cursor</p>
+      <p id="hint">El hoyo sigue al cursor · mantené el click para girar la cámara</p>
     </header>
 
     <div id="toast" hidden></div>
 
     <section id="menu">
       <h1>HOYO</h1>
-      <label class="field">
-        <span>Tu nombre</span>
-        <input id="nick" maxlength="12" autocomplete="nickname" placeholder="Jugador" />
-      </label>
-      <div id="colors" class="colors"></div>
+      <div class="field">
+        <div class="name-row">
+          <button
+            id="color-swatch"
+            class="color-swatch"
+            type="button"
+            aria-label="Elegir color"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="colors"
+          ></button>
+          <div class="nick">
+            <label for="nick">Tu nombre</label>
+            <input id="nick" maxlength="12" autocomplete="nickname" placeholder="Jugador" />
+          </div>
+        </div>
+      </div>
       <button id="play" type="button">JUGAR</button>
     </section>
+
+    <div id="colors" class="color-pop" hidden role="dialog" aria-label="Elegir color"></div>
 
     <section id="end" hidden>
       <p id="end-kicker" class="eyebrow">Se acabó el tiempo</p>
