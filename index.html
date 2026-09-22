@@ -45,110 +45,87 @@
         </div>
       </div>
       <button id="play" type="button">JUGAR</button>
-      <button id="open-market" class="market-entry" type="button">
-        <span class="market-entry-icon" aria-hidden="true">◆</span>
-        <span><b>SPONSOREÁ LA CIUDAD</b><small>Comprá una manzana, edificio o auto</small></span>
+      <button id="open-explore" class="explore-entry" type="button">
+        <span class="explore-entry-icon" aria-hidden="true">◆</span>
+        <span><b>EXPLORÁ Y PERSONALIZÁ</b><small>Recorré la ciudad 3D y elegí cualquier objeto</small></span>
         <em>NUEVO</em>
       </button>
     </section>
 
     <div id="colors" class="color-pop" hidden role="dialog" aria-label="Elegir color"></div>
 
-    <section id="marketplace" class="marketplace" hidden aria-label="Creá tu lugar en Hoyo">
-      <header class="market-topbar">
-        <button id="market-close" class="market-icon-button" type="button" aria-label="Cerrar">×</button>
-        <a class="market-brand" href="#" aria-label="Hoyo">
-          <span>H</span>
-          <strong>HOYO <i>CIUDAD</i></strong>
-        </a>
-        <div class="market-progress" aria-label="Progreso">
-          <span class="active" data-market-progress="1"><b>1</b> Elegí</span>
-          <i></i>
-          <span data-market-progress="2"><b>2</b> Personalizá</span>
-          <i></i>
-          <span data-market-progress="3"><b>3</b> Revisá</span>
-        </div>
-        <button id="market-owned" class="market-owned" type="button">
-          Mis lugares <b id="market-owned-count">0</b>
-        </button>
+    <section id="city-explore" class="city-explore" hidden aria-label="Explorá y personalizá la ciudad">
+      <header class="explore-topbar">
+        <button id="explore-close" class="explore-close" type="button" aria-label="Volver al menú">←</button>
+        <div class="explore-brand"><span>H</span><p><b>HOYO CIUDAD</b><small>Modo exploración</small></p></div>
+        <div class="explore-connection"><i></i><span id="explore-connection-text">Conectando…</span></div>
       </header>
 
-      <main class="market-shell">
-        <section class="market-map-column" aria-label="Mapa de activos">
-          <div class="market-map-head">
-            <div>
-              <p class="market-eyebrow">Explorá la ciudad</p>
-              <h2>Elegí tu lugar</h2>
-            </div>
-            <span class="market-live"><i></i> Ciudad activa</span>
+      <div id="explore-help" class="explore-help">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> volar</span>
+        <span><kbd>ESPACIO</kbd> subir · <kbd>SHIFT</kbd> bajar</span>
+        <span><b>Arrastrá</b> para mirar</span>
+        <span><b>Clic</b> para elegir un objeto</span>
+        <button id="explore-help-close" type="button" aria-label="Ocultar ayuda">×</button>
+      </div>
+
+      <div class="explore-reticle" aria-hidden="true"><i></i></div>
+      <div id="explore-notice" class="explore-notice">Acercate y hacé clic en cualquier objeto</div>
+
+      <aside id="explore-editor" class="explore-editor" hidden>
+        <button id="explore-editor-close" class="editor-close" type="button" aria-label="Cerrar editor">×</button>
+        <p class="editor-kicker">Objeto seleccionado</p>
+        <div class="editor-object">
+          <span id="editor-object-icon">◆</span>
+          <p><b id="editor-object-name">Objeto urbano</b><small id="editor-object-zone">Centro</small></p>
+          <em id="editor-object-state">Disponible</em>
+        </div>
+        <a id="editor-brand-link" class="editor-brand-link" href="" target="_blank" rel="noopener noreferrer" hidden>
+          Visitar sitio de la marca ↗
+        </a>
+
+        <form id="explore-form" novalidate>
+          <div class="editor-live-preview" id="editor-live-preview">
+            <span id="editor-preview-logo">TU</span>
+            <p><b id="editor-preview-name">Tu empresa</b><small>Vista previa en tiempo real</small></p>
           </div>
-          <div id="market-tabs" class="market-tabs" role="tablist" aria-label="Tipo de activo"></div>
-          <div class="market-map-wrap">
-            <canvas id="market-map" width="900" height="620" aria-label="Mapa interactivo de la ciudad"></canvas>
-            <div class="market-map-tools">
-              <button id="market-zoom-in" type="button" aria-label="Acercar">+</button>
-              <button id="market-zoom-out" type="button" aria-label="Alejar">−</button>
-            </div>
-            <div class="market-legend">
-              <span><i class="available"></i> Disponible</span>
-              <span><i class="owned"></i> Tuyo</span>
-              <span><i class="occupied"></i> Ocupado</span>
-            </div>
-            <div id="market-map-tip" class="market-map-tip">Seleccioná un punto del mapa</div>
+
+          <label class="editor-field">
+            <span>Nombre de tu marca</span>
+            <input id="brand-name" maxlength="24" autocomplete="organization" placeholder="Ej. Estudio Norte" required />
+          </label>
+
+          <label class="editor-field">
+            <span>Link <em>Opcional</em></span>
+            <input id="brand-url" type="url" inputmode="url" autocomplete="url" placeholder="https://tuempresa.com" />
+          </label>
+
+          <div class="editor-field">
+            <span>Logo <em>Opcional</em></span>
+            <label class="editor-logo" for="brand-logo">
+              <input id="brand-logo" type="file" accept="image/png,image/jpeg,image/webp" />
+              <b>↑ Subir logo</b><small>PNG, JPG o WebP · máx. 1 MB</small>
+            </label>
+            <p id="brand-logo-error" class="editor-error" hidden></p>
           </div>
-        </section>
 
-        <aside class="market-panel">
-          <div id="market-step-select" class="market-step"></div>
+          <div class="editor-field">
+            <span>Color</span>
+            <div id="brand-colors" class="editor-colors" aria-label="Color de marca"></div>
+          </div>
 
-          <form id="market-step-brand" class="market-step" hidden novalidate>
-            <div class="market-panel-heading">
-              <button class="market-back" type="button" data-market-back="1">← Volver</button>
-              <p class="market-eyebrow">Paso 2 de 3</p>
-              <h2>Hacelo tuyo</h2>
-              <p>Así se va a ver tu marca dentro de la ciudad.</p>
-            </div>
-            <div class="brand-preview" id="brand-preview">
-              <div class="brand-preview-sign">
-                <span id="brand-preview-logo">TU</span>
-                <strong id="brand-preview-name">Tu empresa</strong>
-              </div>
-              <small>Vista previa en el mapa</small>
-            </div>
-            <label class="market-field">
-              <span>Nombre de tu marca <b>Obligatorio</b></span>
-              <input id="brand-name" maxlength="24" autocomplete="organization" placeholder="Ej. Estudio Norte" required />
-              <small id="brand-name-help">Hasta 24 caracteres</small>
-            </label>
-            <label class="market-field">
-              <span>Link de destino <em>Opcional</em></span>
-              <div class="market-url-field">
-                <span>↗</span>
-                <input id="brand-url" type="url" inputmode="url" autocomplete="url" placeholder="https://tuempresa.com" />
-              </div>
-              <small id="brand-url-help">Se abre cuando visitan tu espacio</small>
-            </label>
-            <div class="market-field">
-              <span>Logo <em>Opcional</em></span>
-              <label class="logo-drop" for="brand-logo">
-                <input id="brand-logo" type="file" accept="image/png,image/jpeg,image/webp" />
-                <span class="logo-drop-icon">↑</span>
-                <span><b>Subí tu logo</b><small>PNG, JPG o WebP · máx. 1 MB</small></span>
-                <strong>Elegir archivo</strong>
-              </label>
-              <p id="brand-logo-error" class="market-error" hidden></p>
-            </div>
-            <div class="market-field">
-              <span>Color de marca</span>
-              <div id="brand-colors" class="brand-colors" aria-label="Color de marca"></div>
-            </div>
-            <button class="market-primary" type="submit">Revisar mi espacio <span>→</span></button>
-          </form>
+          <fieldset class="editor-field editor-animation">
+            <legend>Animación</legend>
+            <label><input type="radio" name="brand-animation" value="float" checked /><span>Flotar<small>Movimiento suave</small></span></label>
+            <label><input type="radio" name="brand-animation" value="pulse" /><span>Pulso<small>Destaca la marca</small></span></label>
+            <label><input type="radio" name="brand-animation" value="fixed" /><span>Fijo<small>Más realista</small></span></label>
+          </fieldset>
 
-          <div id="market-step-review" class="market-step" hidden></div>
-          <div id="market-step-success" class="market-step" hidden></div>
-        </aside>
-      </main>
+          <p id="explore-form-error" class="editor-error" hidden></p>
+          <button id="explore-save" class="editor-save" type="submit">Guardar en la ciudad</button>
+          <p class="editor-footnote">La personalización se actualiza para todos en tiempo real.</p>
+        </form>
+      </aside>
     </section>
 
     <section id="end" hidden>

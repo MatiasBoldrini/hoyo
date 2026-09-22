@@ -302,7 +302,6 @@ function nameSprite(text, color) {
 
 const MARKET_BUILDINGS = new Set(["house", "shop", "building", "tower"]);
 const MARKET_VEHICLES = new Set(["car", "van", "bus"]);
-const MARKET_PLACES = new Set(["kiosk", "fountain", "statue", "playset", "busstop", "pool"]);
 
 function marketZone(x, z) {
   const dist = Math.hypot(x, z);
@@ -322,6 +321,10 @@ function marketPrice(category, x, z, kind = "") {
 function assetName(category, kind, index) {
   const serial = String(index + 1).padStart(2, "0");
   const names = {
+    tree: "Árbol",
+    bush: "Arbusto",
+    fence: "Cerco",
+    flower: "Jardinera",
     house: "Casa de barrio",
     shop: "Local comercial",
     building: "Edificio urbano",
@@ -329,12 +332,22 @@ function assetName(category, kind, index) {
     car: "Auto urbano",
     van: "Van de reparto",
     bus: "Vehículo especial",
+    cone: "Cono de tránsito",
+    bench: "Banco urbano",
+    bin: "Contenedor",
+    lamp: "Luminaria",
     kiosk: "Kiosco de plaza",
     fountain: "Fuente pública",
     statue: "Monumento",
     playset: "Área de juegos",
     busstop: "Parada urbana",
     pool: "Club de piscina",
+    hydrant: "Hidrante",
+    mailbox: "Buzón",
+    hedge: "Cerco verde",
+    picnic: "Mesa de picnic",
+    swing: "Hamaca",
+    shed: "Galpón",
   };
   return `${names[kind] || (category === "place" ? "Espacio urbano" : "Activo")} ${serial}`;
 }
@@ -361,11 +374,9 @@ function buildMarketInventory(objects, mapPlan) {
   }
   const counts = { building: 0, vehicle: 0, place: 0 };
   objects.forEach((object, objectIndex) => {
-    let category = "";
+    let category = "place";
     if (MARKET_BUILDINGS.has(object.kind)) category = "building";
     else if (MARKET_VEHICLES.has(object.kind)) category = "vehicle";
-    else if (MARKET_PLACES.has(object.kind)) category = "place";
-    if (!category) return;
     const index = counts[category]++;
     const zone = marketZone(object.x, object.z);
     items.push({
@@ -657,8 +668,6 @@ export async function mountGame(canvas, hooks) {
   let camYawGoal = 0;
   let shake = 0;
   let player = null;
-  let marketFocus = null;
-  let marketOrbit = 0;
   const pointer = new THREE.Vector2();
   let pointerReady = false;
   const aimRay = new THREE.Raycaster();
@@ -669,17 +678,67 @@ export async function mountGame(canvas, hooks) {
   const v = new THREE.Vector3();
   const desired = new THREE.Vector3();
   const look = new THREE.Vector3();
+  const explorePosition = new THREE.Vector3(0, 20, 112);
+  const exploreVelocity = new THREE.Vector3();
+  const exploreWish = new THREE.Vector3();
+  const exploreKeys = new Set();
+  let exploreYaw = 0;
+  let explorePitch = -0.2;
+  let exploreSelected = null;
+  let exploreHovered = null;
 
   await loadProps();
   for (const material of propMaterials()) enablePitClip(material);
   const mapPlan = buildCity(scene, objects, rand);
   const marketItems = buildMarketInventory(objects, mapPlan);
+  const marketByTarget = new Map(marketItems.map((item) => [item.target, item]));
   const brandMarkers = new Map();
+  const outlineGeometry = new THREE.BufferGeometry();
+  const selectedOutline = new THREE.Mesh(
+    outlineGeometry,
+    new THREE.MeshBasicMaterial({
+      color: 0xffe14a,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  const hoverOutline = new THREE.Mesh(
+    outlineGeometry,
+    new THREE.MeshBasicMaterial({
+      color: 0x5ee7ff,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  selectedOutline.renderOrder = 13;
+  hoverOutline.renderOrder = 12;
+  selectedOutline.visible = false;
+  hoverOutline.visible = false;
+  scene.add(selectedOutline, hoverOutline);
   followSun(true);
 
-  function focusMarketItem(id) {
-    marketFocus = marketItems.find((item) => item.id === id) || marketItems[0] || null;
-    marketOrbit = 0.62;
+  function setBranding(record) {
+    const item = marketItems.find((candidate) => candidate.id === record.itemId);
+    if (!item) return;
+    const previous = brandMarkers.get(item.id);
+    if (previous) {
+      scene.remove(previous);
+      disposeBrandSprite(previous);
+    }
+    const marker = brandSprite(record);
+    marker.userData.marketItem = item;
+    marker.userData.url = record.url;
+    marker.userData.company = record.company;
+    marker.userData.animation = record.animation || "float";
+    marker.userData.baseScale = marker.scale.clone();
+    brandMarkers.set(item.id, marker);
+    scene.add(marker);
   }
 
   function setBrandings(records) {
@@ -688,16 +747,7 @@ export async function mountGame(canvas, hooks) {
       disposeBrandSprite(marker);
     }
     brandMarkers.clear();
-    for (const record of records) {
-      const item = marketItems.find((candidate) => candidate.id === record.itemId);
-      if (!item) continue;
-      const marker = brandSprite(record);
-      marker.userData.marketItem = item;
-      marker.userData.url = record.url;
-      marker.userData.company = record.company;
-      brandMarkers.set(item.id, marker);
-      scene.add(marker);
-    }
+    for (const record of records) setBranding(record);
     updateBrandMarkers();
   }
 
@@ -705,7 +755,13 @@ export async function mountGame(canvas, hooks) {
     for (const marker of brandMarkers.values()) {
       const item = marker.userData.marketItem;
       const target = item.target;
-      marker.position.set(target.x, (target.y || 0) + Math.max(3.6, item.height + 1.8), target.z);
+      const animation = marker.userData.animation;
+      const wave = Math.sin(timeU.value * 2.2 + target.x * 0.08 + target.z * 0.05);
+      const lift = animation === "float" ? wave * 0.22 : 0;
+      const pulse = animation === "pulse" ? 1 + wave * 0.045 : 1;
+      marker.position.set(target.x, (target.y || 0) + Math.max(3.6, item.height + 1.8) + lift, target.z);
+      marker.scale.copy(marker.userData.baseScale).multiplyScalar(pulse);
+      marker.material.opacity = animation === "pulse" ? 0.9 + wave * 0.1 : 1;
       marker.visible = !target.state || target.state === "idle";
     }
   }
@@ -762,6 +818,131 @@ export async function mountGame(canvas, hooks) {
     phase = "menu";
     for (const hole of holes) hole.group.visible = false;
     for (const value of holeXZR) value.set(0, 0, 0);
+  }
+
+  function beginExplore() {
+    for (const hole of holes) disposeHole(hole);
+    holes.length = 0;
+    player = null;
+    for (const obj of objects) resetObj(obj);
+    for (const value of holeXZR) value.set(0, 0, 0);
+    explorePosition.set(0, 20, 112);
+    exploreVelocity.set(0, 0, 0);
+    exploreYaw = 0;
+    explorePitch = -0.2;
+    exploreKeys.clear();
+    exploreSelected = null;
+    exploreHovered = null;
+    selectedOutline.visible = false;
+    hoverOutline.visible = false;
+    phase = "explore";
+    viewStale = true;
+    followSun(true);
+  }
+
+  function endExplore() {
+    if (phase !== "explore") return;
+    phase = "menu";
+    exploreKeys.clear();
+    exploreSelected = null;
+    exploreHovered = null;
+    selectedOutline.visible = false;
+    hoverOutline.visible = false;
+  }
+
+  function updateExplore(dt) {
+    let forward = 0;
+    let side = 0;
+    if (exploreKeys.has("KeyW")) forward += 1;
+    if (exploreKeys.has("KeyS")) forward -= 1;
+    if (exploreKeys.has("KeyD")) side += 1;
+    if (exploreKeys.has("KeyA")) side -= 1;
+    let vertical = 0;
+    if (exploreKeys.has("Space")) vertical += 1;
+    if (exploreKeys.has("ShiftLeft") || exploreKeys.has("ShiftRight")) vertical -= 1;
+    const sin = Math.sin(exploreYaw);
+    const cos = Math.cos(exploreYaw);
+    const level = Math.cos(explorePitch);
+    exploreWish.set(
+      -sin * level * forward + cos * side,
+      Math.sin(explorePitch) * forward + vertical,
+      -cos * level * forward - sin * side,
+    );
+    if (exploreWish.lengthSq() > 1) exploreWish.normalize();
+    const speed = 17;
+    exploreVelocity.x = THREE.MathUtils.damp(exploreVelocity.x, exploreWish.x * speed, 7, dt);
+    exploreVelocity.y = THREE.MathUtils.damp(exploreVelocity.y, exploreWish.y * speed, 7, dt);
+    exploreVelocity.z = THREE.MathUtils.damp(exploreVelocity.z, exploreWish.z * speed, 7, dt);
+    explorePosition.addScaledVector(exploreVelocity, dt);
+    explorePosition.y = THREE.MathUtils.clamp(explorePosition.y, 2.4, 68);
+    const reach = ISLAND + 8;
+    const distance = Math.hypot(explorePosition.x, explorePosition.z);
+    if (distance > reach) {
+      explorePosition.x *= reach / distance;
+      explorePosition.z *= reach / distance;
+    }
+    camera.position.copy(explorePosition);
+    camera.rotation.set(explorePitch, exploreYaw, 0, "YXZ");
+    driftCity(dt);
+    updateExploreSelection();
+    followSun();
+  }
+
+  function syncExploreOutline(outline, item, pulse = 0) {
+    const target = item?.target;
+    if (!target || (target.state && target.state !== "idle")) {
+      outline.visible = false;
+      return;
+    }
+    outline.geometry = target.mesh.geometry;
+    outline.position.copy(target.mesh.position);
+    outline.quaternion.copy(target.mesh.quaternion);
+    const extent = Math.max(0.5, target.eatR, target.height * 0.35);
+    const expansion = 1 + 0.08 / extent + pulse;
+    outline.scale.copy(target.mesh.scale).multiplyScalar(expansion);
+    outline.visible = true;
+  }
+
+  function updateExploreSelection() {
+    const pulse = (Math.sin(timeU.value * 4) + 1) * 0.006;
+    syncExploreOutline(selectedOutline, exploreSelected, pulse);
+    selectedOutline.material.opacity = 0.78 + Math.sin(timeU.value * 4) * 0.14;
+    if (exploreHovered === exploreSelected) hoverOutline.visible = false;
+    else syncExploreOutline(hoverOutline, exploreHovered);
+  }
+
+  function publicMarketItem(item) {
+    if (!item) return null;
+    const { target, ...value } = item;
+    return { ...value };
+  }
+
+  function raycastExploreItem(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    aimRay.setFromCamera(pointer, camera);
+    const markerHit = aimRay.intersectObjects([...brandMarkers.values()], false)[0];
+    if (markerHit && markerHit.distance < 100) return markerHit.object.userData.marketItem;
+    const hit = aimRay.intersectObjects(batchList.map((record) => record.mesh), false)[0];
+    if (!hit || hit.distance > 100) return null;
+    const record = batchList.find((candidate) => candidate.mesh === hit.object);
+    const target = record?.packedItems[hit.instanceId];
+    return marketByTarget.get(target) || null;
+  }
+
+  function pickExploreItem(clientX, clientY) {
+    if (phase !== "explore") return null;
+    exploreSelected = raycastExploreItem(clientX, clientY);
+    updateExploreSelection();
+    return publicMarketItem(exploreSelected);
+  }
+
+  function hoverExploreItem(clientX, clientY) {
+    if (phase !== "explore") return null;
+    exploreHovered = raycastExploreItem(clientX, clientY);
+    updateExploreSelection();
+    return publicMarketItem(exploreHovered);
   }
 
   function finish() {
@@ -1673,21 +1854,8 @@ export async function mountGame(canvas, hooks) {
       camera.position.set(Math.sin(camOrbit) * 52, 34, Math.cos(camOrbit) * 52);
       camera.lookAt(0, 0, 0);
       driftCity(dt);
-    } else if (phase === "market") {
-      const item = marketFocus || marketItems[0];
-      const target = item?.target;
-      if (target) {
-        marketOrbit += dt * 0.08;
-        const radius = item.category === "parcel" ? 33 : item.category === "building" ? 20 : 13;
-        const height = item.category === "parcel" ? 27 : Math.max(9, item.height + 7);
-        camera.position.set(
-          target.x + Math.sin(marketOrbit) * radius,
-          height,
-          target.z + Math.cos(marketOrbit) * radius,
-        );
-        camera.lookAt(target.x, Math.min(item.height * 0.42, 6), target.z);
-      }
-      driftCity(dt);
+    } else if (phase === "explore") {
+      updateExplore(dt);
     } else if (phase === "play") {
       timeLeft -= dt;
       if (timeLeft <= 0) finish();
@@ -1721,22 +1889,33 @@ export async function mountGame(canvas, hooks) {
   const api = {
     start,
     returnToMenu,
-    getMarketItems() {
+    getCityItems() {
       return marketItems.map(({ target, ...item }) => ({ ...item }));
     },
-    openMarketplace(id) {
-      phase = "market";
-      focusMarketItem(id);
+    beginExplore,
+    endExplore,
+    setExploreKey(code, pressed) {
+      if (pressed) exploreKeys.add(code);
+      else exploreKeys.delete(code);
     },
-    closeMarketplace() {
-      phase = "menu";
-      marketFocus = null;
+    rotateExplore(deltaX, deltaY) {
+      exploreYaw -= deltaX * 0.0032;
+      explorePitch = THREE.MathUtils.clamp(explorePitch - deltaY * 0.0026, -1.05, 0.72);
     },
-    showcaseMarketItem(id) {
-      phase = "market";
-      focusMarketItem(id);
+    pickExploreItem,
+    hoverExploreItem,
+    clearExploreHover() {
+      exploreHovered = null;
+      hoverOutline.visible = false;
     },
-    focusMarketItem,
+    clearExploreSelection() {
+      exploreSelected = null;
+      selectedOutline.visible = false;
+    },
+    previewBranding(record) {
+      setBranding(record);
+      updateBrandMarkers();
+    },
     setBrandings,
     visitBrandAt(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
@@ -1886,7 +2065,8 @@ function flushBatches(camera, fogFar) {
 
 function packBatch(rec, eye) {
   rec.dirty = false;
-  const { mesh, items, fade } = rec;
+  const { mesh, items, fade, packedItems } = rec;
+  packedItems.length = 0;
   let n = 0;
   for (const obj of items) {
     if (obj.state === "falling" || obj.state === "gone") continue;
@@ -1894,6 +2074,7 @@ function packBatch(rec, eye) {
     if (!obj.inView) continue;
     mesh.setMatrixAt(n, obj.mesh.matrix);
     fade.array[n] = obj.fade;
+    packedItems[n] = obj;
     n += 1;
   }
   mesh.count = n;
@@ -2080,7 +2261,14 @@ function buildBatches(scene, objects) {
     const fade = new THREE.InstancedBufferAttribute(new Float32Array(list.length).fill(1), 1);
     fade.setUsage(THREE.DynamicDrawUsage);
     batch.geometry.setAttribute("aFade", fade);
-    const rec = { mesh: batch, items: list, fade, dirty: true, moving: list.some((obj) => obj.motion) };
+    const rec = {
+      mesh: batch,
+      items: list,
+      packedItems: [],
+      fade,
+      dirty: true,
+      moving: list.some((obj) => obj.motion),
+    };
     for (const obj of list) {
       obj.batch = rec;
       obj.mesh.updateMatrix();

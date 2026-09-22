@@ -26,6 +26,7 @@ function fromRow(row) {
     logo: row.logo_url || "",
     logoPath: row.logo_path || "",
     color: row.color,
+    animation: row.animation || "float",
     ownerId: row.owner_id,
     mine: row.owner_id === userId,
     createdAt: row.created_at,
@@ -59,7 +60,7 @@ export async function connectSponsorStore() {
     async list() {
       const { data, error } = await supabase
         .from("sponsorships")
-        .select("id,asset_id,company,target_url,logo_path,logo_url,color,owner_id,created_at")
+        .select("id,asset_id,company,target_url,logo_path,logo_url,color,animation,owner_id,created_at")
         .in("status", ["active", "pending"])
         .order("created_at", { ascending: true });
       if (error) throw error;
@@ -86,6 +87,7 @@ export async function connectSponsorStore() {
         logo_path: logoPath || null,
         logo_url: logoUrl || null,
         color: record.color,
+        animation: record.animation || "float",
         price_usd: item.price,
         owner_id: userId,
         status: "active",
@@ -93,7 +95,7 @@ export async function connectSponsorStore() {
       const { data, error } = await supabase
         .from("sponsorships")
         .upsert(payload, { onConflict: "asset_id" })
-        .select("id,asset_id,company,target_url,logo_path,logo_url,color,owner_id,created_at")
+        .select("id,asset_id,company,target_url,logo_path,logo_url,color,animation,owner_id,created_at")
         .single();
       if (error) {
         if (error.code === "23505" || error.code === "42501") {

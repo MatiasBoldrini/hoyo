@@ -1,9 +1,9 @@
 import { mountGame, PLAYER_COLORS } from "./game.js";
-import { mountMarketplace } from "./marketplace.js";
+import { mountCityExplore } from "./city-explore.js";
 
 const canvas = document.querySelector("#view");
 const menu = document.querySelector("#menu");
-const marketplace = document.querySelector("#marketplace");
+const cityExplore = document.querySelector("#city-explore");
 const end = document.querySelector("#end");
 const hud = document.querySelector("#hud");
 const timer = document.querySelector("#timer");
@@ -109,7 +109,7 @@ const game = await mountGame(canvas, {
     setTimeout(() => pop.remove(), 700);
   },
 });
-mountMarketplace(game);
+mountCityExplore(game);
 
 const hudState = { danger: "", time: "", rows: "", toast: null, map: null, dot: "" };
 const mapLayer = document.createElement("canvas");
@@ -329,7 +329,9 @@ function begin() {
 play.addEventListener("click", begin);
 again.addEventListener("click", begin);
 canvas.addEventListener("click", (event) => {
-  if (!menu.hidden || !end.hidden) game.visitBrandAt(event.clientX, event.clientY);
+  if (cityExplore.hidden && (!menu.hidden || !end.hidden)) {
+    game.visitBrandAt(event.clientX, event.clientY);
+  }
 });
 nick.addEventListener("keydown", (event) => {
   if (event.key === "Enter") begin();
@@ -337,7 +339,7 @@ nick.addEventListener("keydown", (event) => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !menu.hidden) begin();
-  if (event.key !== "Escape" || !marketplace.hidden || !menu.hidden || !end.hidden || hud.hidden) return;
+  if (event.key !== "Escape" || !cityExplore.hidden || !menu.hidden || !end.hidden || hud.hidden) return;
   event.preventDefault();
   game.returnToMenu();
   showMainMenu("Saliste de la partida. Cambiá tu nombre o color y volvé a entrar.");
@@ -348,13 +350,13 @@ window.addEventListener("keydown", (event) => {
 let turnFrom = null;
 
 window.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "mouse" || event.button !== 0 || !menu.hidden || !end.hidden) return;
+  if (event.pointerType !== "mouse" || event.button !== 0 || !cityExplore.hidden || !menu.hidden || !end.hidden) return;
   turnFrom = event.clientX;
   document.body.classList.add("turning");
 });
 
 window.addEventListener("pointermove", (event) => {
-  if (!menu.hidden || !end.hidden) return;
+  if (!cityExplore.hidden || !menu.hidden || !end.hidden) return;
   if (turnFrom !== null) {
     game.rotateCamera(-(event.clientX - turnFrom) * 0.006);
     turnFrom = event.clientX;
