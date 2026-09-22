@@ -15,6 +15,10 @@ const SEA = 268;
 const SKY = 0x8ec8f8;
 const ROUND = 120;
 const START_R = 0.82;
+const EXPLORE_HEIGHT = 20;
+// Conserva la inclinación de la cámara del juego sin convertir exploración
+// en una cámara de vuelo libre.
+const EXPLORE_PITCH = -0.78;
 // Lo que cae tiene que estar sobre el vacío: el aro cubre hasta ~0.82R y el embudo
 // va de 0.88R arriba a 0.5R en el fondo (ver syncHole y createHole).
 const MOUTH = 0.84;
@@ -679,7 +683,7 @@ export async function mountGame(canvas, hooks) {
   const v = new THREE.Vector3();
   const desired = new THREE.Vector3();
   const look = new THREE.Vector3();
-  const explorePosition = new THREE.Vector3(0, 20, 112);
+  const explorePosition = new THREE.Vector3(0, EXPLORE_HEIGHT, 112);
   const exploreVelocity = new THREE.Vector3();
   const exploreWish = new THREE.Vector3();
   const exploreReturnPosition = new THREE.Vector3();
@@ -691,9 +695,9 @@ export async function mountGame(canvas, hooks) {
   const exploreFocusToward = new THREE.Vector3();
   const exploreKeys = new Set();
   let exploreYaw = 0;
-  let explorePitch = -0.2;
+  let explorePitch = EXPLORE_PITCH;
   let exploreReturnYaw = 0;
-  let exploreReturnPitch = -0.2;
+  let exploreReturnPitch = EXPLORE_PITCH;
   let exploreFocused = null;
   let exploreReturning = false;
   let exploreHasReturnPose = false;
@@ -901,10 +905,10 @@ export async function mountGame(canvas, hooks) {
     player = null;
     for (const obj of objects) resetObj(obj);
     for (const value of holeXZR) value.set(0, 0, 0);
-    explorePosition.set(0, 20, 112);
+    explorePosition.set(0, EXPLORE_HEIGHT, 112);
     exploreVelocity.set(0, 0, 0);
     exploreYaw = 0;
-    explorePitch = -0.2;
+    explorePitch = EXPLORE_PITCH;
     exploreKeys.clear();
     exploreFocused = null;
     exploreReturning = false;
@@ -942,20 +946,22 @@ export async function mountGame(canvas, hooks) {
     exploreFocusDirection.copy(explorePosition).sub(exploreFocusCenter);
     const horizontal = Math.hypot(exploreFocusDirection.x, exploreFocusDirection.z);
     if (horizontal < 0.001) {
-      exploreFocusDirection.set(Math.sin(exploreYaw), 0.3, Math.cos(exploreYaw));
+      exploreFocusDirection.set(Math.sin(exploreYaw), 0, Math.cos(exploreYaw));
     } else {
-      const y = THREE.MathUtils.clamp(exploreFocusDirection.y / horizontal, 0.18, 0.72);
       exploreFocusDirection.set(
         exploreFocusDirection.x / horizontal,
-        y,
+        0,
         exploreFocusDirection.z / horizontal,
       );
     }
-    exploreFocusDirection.normalize();
+    exploreFocusDirection
+      .multiplyScalar(Math.cos(EXPLORE_PITCH))
+      .setY(-Math.sin(EXPLORE_PITCH))
+      .normalize();
     exploreFocusDistance = THREE.MathUtils.clamp(
-      Math.max(target.eatR * 2.8, target.height * 1.35),
-      5,
-      25,
+      Math.max(target.eatR * 3.35, target.height * 1.6),
+      6.5,
+      29,
     );
     exploreFocused = item;
     exploreReturning = false;
@@ -993,15 +999,16 @@ export async function mountGame(canvas, hooks) {
         .copy(exploreFocusDirection)
         .multiplyScalar(exploreFocusDistance)
         .add(exploreFocusCenter);
-      exploreFocusGoal.y = Math.max(1.8, exploreFocusGoal.y);
 
       exploreFocusLook.copy(exploreFocusCenter);
       exploreFocusToward.copy(exploreFocusCenter).sub(exploreFocusGoal).normalize();
-      if (window.innerWidth <= 620) {
-        exploreFocusLook.y -= exploreFocusDistance * 0.16;
-      } else {
+      if (window.innerWidth > 620) {
         exploreFocusRight.crossVectors(exploreFocusToward, camera.up).normalize();
-        exploreFocusLook.addScaledVector(exploreFocusRight, exploreFocusDistance * 0.09);
+        // Corre cámara y objetivo juntos para dejar lugar al panel sin cambiar
+        // la inclinación de la toma.
+        const framingOffset = exploreFocusDistance * 0.09;
+        exploreFocusGoal.addScaledVector(exploreFocusRight, framingOffset);
+        exploreFocusLook.addScaledVector(exploreFocusRight, framingOffset);
       }
       exploreFocusToward.copy(exploreFocusLook).sub(exploreFocusGoal).normalize();
       const yaw = Math.atan2(-exploreFocusToward.x, -exploreFocusToward.z);
@@ -1037,27 +1044,21 @@ export async function mountGame(canvas, hooks) {
       if (exploreKeys.has("KeyD")) side += 1;
       if (exploreKeys.has("KeyA")) side -= 1;
     }
-    let vertical = 0;
-    if (!exploreFocused && !exploreReturning) {
-      if (exploreKeys.has("Space")) vertical += 1;
-      if (exploreKeys.has("ShiftLeft") || exploreKeys.has("ShiftRight")) vertical -= 1;
-    }
     const sin = Math.sin(exploreYaw);
     const cos = Math.cos(exploreYaw);
-    const level = Math.cos(explorePitch);
     exploreWish.set(
-      -sin * level * forward + cos * side,
-      Math.sin(explorePitch) * forward + vertical,
-      -cos * level * forward - sin * side,
+      -sin * forward + cos * side,
+      0,
+      -cos * forward - sin * side,
     );
     if (exploreWish.lengthSq() > 1) exploreWish.normalize();
     const speed = 17;
     exploreVelocity.x = THREE.MathUtils.damp(exploreVelocity.x, exploreWish.x * speed, 7, dt);
-    exploreVelocity.y = THREE.MathUtils.damp(exploreVelocity.y, exploreWish.y * speed, 7, dt);
+    exploreVelocity.y = 0;
     exploreVelocity.z = THREE.MathUtils.damp(exploreVelocity.z, exploreWish.z * speed, 7, dt);
     if (!exploreFocused && !exploreReturning) {
       explorePosition.addScaledVector(exploreVelocity, dt);
-      explorePosition.y = THREE.MathUtils.clamp(explorePosition.y, 2.4, 68);
+      explorePosition.y = EXPLORE_HEIGHT;
       const reach = ISLAND + 8;
       const distance = Math.hypot(explorePosition.x, explorePosition.z);
       if (distance > reach) {
@@ -2181,10 +2182,23 @@ export async function mountGame(canvas, hooks) {
       if (pressed) exploreKeys.add(code);
       else exploreKeys.delete(code);
     },
-    rotateExplore(deltaX, deltaY) {
+    rotateExplore(deltaX) {
       if (exploreFocused || exploreReturning) return;
       exploreYaw -= deltaX * 0.0024;
-      explorePitch = THREE.MathUtils.clamp(explorePitch - deltaY * 0.0021, -1.05, 0.72);
+      explorePitch = EXPLORE_PITCH;
+    },
+    orbitExplore(deltaX) {
+      if (!exploreFocused || exploreReturning) return;
+      const angle = -deltaX * 0.0036;
+      const horizontal = Math.cos(EXPLORE_PITCH);
+      const x = exploreFocusDirection.x;
+      const z = exploreFocusDirection.z;
+      exploreFocusDirection.x = x * Math.cos(angle) - z * Math.sin(angle);
+      exploreFocusDirection.z = x * Math.sin(angle) + z * Math.cos(angle);
+      const length = Math.hypot(exploreFocusDirection.x, exploreFocusDirection.z) || 1;
+      exploreFocusDirection.x *= horizontal / length;
+      exploreFocusDirection.z *= horizontal / length;
+      exploreFocusDirection.y = -Math.sin(EXPLORE_PITCH);
     },
     pickExploreItem,
     selectExploreItem,

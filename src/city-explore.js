@@ -6,7 +6,7 @@ const SYNC_COPY = {
   online: "Tu marca aparece para todos los jugadores al instante.",
   local: "Sin conexión con la ciudad: se guarda solo en este navegador.",
 };
-const MOVE_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"];
+const MOVE_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD"];
 
 const priceFormat = new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", year: "numeric" });
@@ -329,8 +329,11 @@ export async function mountCityExplore(game) {
   function paintDesignerArtwork() {
     const { design } = draft;
     const width = designCanvas.width * design.scale;
+    const height = width * 0.5;
+    const centerX = width / 2 + design.x * (designCanvas.width - width);
+    const centerY = height / 2 + design.y * (designCanvas.height - height);
     designContext.save();
-    designContext.translate(designCanvas.width * design.x, designCanvas.height * design.y);
+    designContext.translate(centerX, centerY);
     designContext.rotate((design.rotation * Math.PI) / 180);
 
     if (designerImage) {
@@ -727,6 +730,8 @@ export async function mountCityExplore(game) {
     pointerStartedWhileEditing = !panel.hidden;
     pointerDownX = event.clientX;
     pointerDownY = event.clientY;
+    pointerX = event.clientX;
+    pointerY = event.clientY;
     if (document.pointerLockElement !== canvas) canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
@@ -739,11 +744,18 @@ export async function mountCityExplore(game) {
       if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
       return;
     }
+    const previousX = pointerX;
+    const previousY = pointerY;
     pointerInside = true;
     pointerX = event.clientX;
     pointerY = event.clientY;
     if (pointerDown && Math.abs(pointerX - pointerDownX) + Math.abs(pointerY - pointerDownY) > 4) {
       pointerMoved = true;
+    }
+    if (pointerDown && pointerMoved) {
+      if (panel.hidden) game.rotateExplore(pointerX - previousX, pointerY - previousY);
+      else game.orbitExplore(pointerX - previousX);
+      return;
     }
     if (!panel.hidden) return;
     if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
@@ -782,8 +794,12 @@ export async function mountCityExplore(game) {
 
   function moveDesign(event) {
     const rect = designCanvas.getBoundingClientRect();
-    draft.design.x = clamp((event.clientX - rect.left) / rect.width, 0.05, 0.95, 0.5);
-    draft.design.y = clamp((event.clientY - rect.top) / rect.height, 0.05, 0.95, 0.5);
+    const pointerX = ((event.clientX - rect.left) / rect.width) * designCanvas.width;
+    const pointerY = ((event.clientY - rect.top) / rect.height) * designCanvas.height;
+    const width = designCanvas.width * draft.design.scale;
+    const height = width * 0.5;
+    draft.design.x = clamp((pointerX - width / 2) / (designCanvas.width - width), 0.05, 0.95, 0.5);
+    draft.design.y = clamp((pointerY - height / 2) / (designCanvas.height - height), 0.05, 0.95, 0.5);
     renderDraft();
   }
 
