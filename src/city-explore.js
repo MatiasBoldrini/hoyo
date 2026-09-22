@@ -1,3 +1,5 @@
+import { sponsorDomain } from "./sponsor-domain.js";
+
 const BRAND_COLORS = ["#2257e6", "#f05a35", "#111827", "#16a06d", "#8b5cf6", "#eab308"];
 const STORAGE_KEY = "hoyo-market-places-v2";
 const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -187,6 +189,14 @@ export async function mountCityExplore(game) {
 
   const recordFor = (item) => records.find((record) => record.itemId === item?.id);
   const stateFor = (record) => (!record ? "available" : record.mine ? "mine" : "taken");
+  const domainConflictFor = (value) => {
+    const domain = sponsorDomain(value);
+    if (!domain) return null;
+    const record = records.find(
+      (candidate) => candidate.itemId !== selected?.id && sponsorDomain(candidate.url) === domain,
+    );
+    return record ? { domain, record } : null;
+  };
 
   function draftFrom(record) {
     return {
@@ -898,6 +908,14 @@ export async function mountCityExplore(game) {
     }
     if (draft.url.trim() && !safeUrl(draft.url)) {
       brandUrl.setCustomValidity("Revisá el link: no parece una dirección válida.");
+      brandUrl.reportValidity();
+      return;
+    }
+    const domainConflict = domainConflictFor(draft.url);
+    if (domainConflict) {
+      brandUrl.setCustomValidity(
+        `${domainConflict.domain} ya está asociado a ${domainConflict.record.company}. Cada dominio puede aparecer una sola vez.`,
+      );
       brandUrl.reportValidity();
       return;
     }

@@ -129,6 +129,12 @@ export async function connectSponsorStore() {
         ({ data, error } = await upsert());
       }
       if (error) {
+        const domainConflict = [error.message, error.details, error.hint]
+          .filter(Boolean)
+          .some((value) => /target_domain|active_target_domain/i.test(value));
+        if (error.code === "23505" && domainConflict) {
+          throw new Error("Ese dominio ya está asociado a otra marca. Cada dominio puede aparecer una sola vez.");
+        }
         if (error.code === "23505" || error.code === "42501") {
           throw new Error("Otra marca reservó este espacio hace un momento. Probá con otro.");
         }
