@@ -26,6 +26,7 @@
 
     <section id="menu">
       <h1>HOYO</h1>
+      <p id="menu-message" class="menu-message" hidden></p>
       <div class="field">
         <div class="name-row">
           <button
@@ -44,9 +45,111 @@
         </div>
       </div>
       <button id="play" type="button">JUGAR</button>
+      <button id="open-market" class="market-entry" type="button">
+        <span class="market-entry-icon" aria-hidden="true">◆</span>
+        <span><b>SPONSOREÁ LA CIUDAD</b><small>Comprá una manzana, edificio o auto</small></span>
+        <em>NUEVO</em>
+      </button>
     </section>
 
     <div id="colors" class="color-pop" hidden role="dialog" aria-label="Elegir color"></div>
+
+    <section id="marketplace" class="marketplace" hidden aria-label="Creá tu lugar en Hoyo">
+      <header class="market-topbar">
+        <button id="market-close" class="market-icon-button" type="button" aria-label="Cerrar">×</button>
+        <a class="market-brand" href="#" aria-label="Hoyo">
+          <span>H</span>
+          <strong>HOYO <i>CIUDAD</i></strong>
+        </a>
+        <div class="market-progress" aria-label="Progreso">
+          <span class="active" data-market-progress="1"><b>1</b> Elegí</span>
+          <i></i>
+          <span data-market-progress="2"><b>2</b> Personalizá</span>
+          <i></i>
+          <span data-market-progress="3"><b>3</b> Revisá</span>
+        </div>
+        <button id="market-owned" class="market-owned" type="button">
+          Mis lugares <b id="market-owned-count">0</b>
+        </button>
+      </header>
+
+      <main class="market-shell">
+        <section class="market-map-column" aria-label="Mapa de activos">
+          <div class="market-map-head">
+            <div>
+              <p class="market-eyebrow">Explorá la ciudad</p>
+              <h2>Elegí tu lugar</h2>
+            </div>
+            <span class="market-live"><i></i> Ciudad activa</span>
+          </div>
+          <div id="market-tabs" class="market-tabs" role="tablist" aria-label="Tipo de activo"></div>
+          <div class="market-map-wrap">
+            <canvas id="market-map" width="900" height="620" aria-label="Mapa interactivo de la ciudad"></canvas>
+            <div class="market-map-tools">
+              <button id="market-zoom-in" type="button" aria-label="Acercar">+</button>
+              <button id="market-zoom-out" type="button" aria-label="Alejar">−</button>
+            </div>
+            <div class="market-legend">
+              <span><i class="available"></i> Disponible</span>
+              <span><i class="owned"></i> Tuyo</span>
+              <span><i class="occupied"></i> Ocupado</span>
+            </div>
+            <div id="market-map-tip" class="market-map-tip">Seleccioná un punto del mapa</div>
+          </div>
+        </section>
+
+        <aside class="market-panel">
+          <div id="market-step-select" class="market-step"></div>
+
+          <form id="market-step-brand" class="market-step" hidden novalidate>
+            <div class="market-panel-heading">
+              <button class="market-back" type="button" data-market-back="1">← Volver</button>
+              <p class="market-eyebrow">Paso 2 de 3</p>
+              <h2>Hacelo tuyo</h2>
+              <p>Así se va a ver tu marca dentro de la ciudad.</p>
+            </div>
+            <div class="brand-preview" id="brand-preview">
+              <div class="brand-preview-sign">
+                <span id="brand-preview-logo">TU</span>
+                <strong id="brand-preview-name">Tu empresa</strong>
+              </div>
+              <small>Vista previa en el mapa</small>
+            </div>
+            <label class="market-field">
+              <span>Nombre de tu marca <b>Obligatorio</b></span>
+              <input id="brand-name" maxlength="24" autocomplete="organization" placeholder="Ej. Estudio Norte" required />
+              <small id="brand-name-help">Hasta 24 caracteres</small>
+            </label>
+            <label class="market-field">
+              <span>Link de destino <em>Opcional</em></span>
+              <div class="market-url-field">
+                <span>↗</span>
+                <input id="brand-url" type="url" inputmode="url" autocomplete="url" placeholder="https://tuempresa.com" />
+              </div>
+              <small id="brand-url-help">Se abre cuando visitan tu espacio</small>
+            </label>
+            <div class="market-field">
+              <span>Logo <em>Opcional</em></span>
+              <label class="logo-drop" for="brand-logo">
+                <input id="brand-logo" type="file" accept="image/png,image/jpeg,image/webp" />
+                <span class="logo-drop-icon">↑</span>
+                <span><b>Subí tu logo</b><small>PNG, JPG o WebP · máx. 1 MB</small></span>
+                <strong>Elegir archivo</strong>
+              </label>
+              <p id="brand-logo-error" class="market-error" hidden></p>
+            </div>
+            <div class="market-field">
+              <span>Color de marca</span>
+              <div id="brand-colors" class="brand-colors" aria-label="Color de marca"></div>
+            </div>
+            <button class="market-primary" type="submit">Revisar mi espacio <span>→</span></button>
+          </form>
+
+          <div id="market-step-review" class="market-step" hidden></div>
+          <div id="market-step-success" class="market-step" hidden></div>
+        </aside>
+      </main>
+    </section>
 
     <section id="end" hidden>
       <p id="end-kicker" class="eyebrow">Se acabó el tiempo</p>

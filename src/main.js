@@ -1,7 +1,9 @@
 import { mountGame, PLAYER_COLORS } from "./game.js";
+import { mountMarketplace } from "./marketplace.js";
 
 const canvas = document.querySelector("#view");
 const menu = document.querySelector("#menu");
+const marketplace = document.querySelector("#marketplace");
 const end = document.querySelector("#end");
 const hud = document.querySelector("#hud");
 const timer = document.querySelector("#timer");
@@ -19,6 +21,7 @@ const again = document.querySelector("#again");
 const endTitle = document.querySelector("#end-title");
 const endScore = document.querySelector("#end-score");
 const loading = document.querySelector("#loading");
+const menuMessage = document.querySelector("#menu-message");
 
 const saved = localStorage.getItem("hoyo-name");
 if (saved && saved !== "Jugador") nick.value = saved;
@@ -106,6 +109,7 @@ const game = await mountGame(canvas, {
     setTimeout(() => pop.remove(), 700);
   },
 });
+mountMarketplace(game);
 
 const hudState = { danger: "", time: "", rows: "", toast: null, map: null, dot: "" };
 const mapLayer = document.createElement("canvas");
@@ -314,6 +318,8 @@ function begin() {
   menu.hidden = true;
   end.hidden = true;
   hud.hidden = false;
+  menuMessage.hidden = true;
+  toast.hidden = true;
   nick.blur();
   hint.classList.remove("hide");
   setTimeout(() => hint.classList.add("hide"), 4200);
@@ -322,12 +328,19 @@ function begin() {
 
 play.addEventListener("click", begin);
 again.addEventListener("click", begin);
+canvas.addEventListener("click", (event) => {
+  if (!menu.hidden || !end.hidden) game.visitBrandAt(event.clientX, event.clientY);
+});
 nick.addEventListener("keydown", (event) => {
   if (event.key === "Enter") begin();
 });
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !menu.hidden) begin();
+  if (event.key !== "Escape" || !marketplace.hidden || !menu.hidden || !end.hidden || hud.hidden) return;
+  event.preventDefault();
+  game.returnToMenu();
+  showMainMenu("Saliste de la partida. Cambiá tu nombre o color y volvé a entrar.");
 });
 // Con el mouse, mantener el click y arrastrar gira la cámara. Mientras tanto el
 // objetivo queda fijo en pantalla, así el hoyo sigue en la misma dirección relativa.
@@ -367,3 +380,21 @@ game.onEnd = (result) => {
   endScore.textContent = `Puntaje ${result.score} · récord ${best}`;
   renderRows(finalList, result.rows);
 };
+
+game.onPlayerDeath = () => {
+  showMainMenu("Te tragaron. Elegí tu nombre y volvé a la ciudad.");
+};
+
+function showMainMenu(message) {
+  hud.hidden = true;
+  end.hidden = true;
+  menu.hidden = false;
+  toast.hidden = true;
+  stopTurning();
+  menuMessage.textContent = message;
+  menuMessage.hidden = false;
+  window.setTimeout(() => {
+    nick.focus();
+    nick.select();
+  }, 0);
+}

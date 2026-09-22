@@ -266,10 +266,14 @@ gl_FragColor.rgb *= vWorldHole.y < 0.0 ? clamp(1.0 + vWorldHole.y / (0.12 + mout
 }
 
 function nameSprite(text, color) {
+  // El cartel se estira en pantalla: dibujarlo chico (256×64) lo dejaba pixelado.
+  const scale = 4;
   const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 64;
+  c.width = 256 * scale;
+  c.height = 64 * scale;
   const g = c.getContext("2d");
+  g.scale(scale, scale);
+  g.imageSmoothingQuality = "high";
   g.font = "800 32px Trebuchet MS, sans-serif";
   const width = Math.min(232, Math.ceil(g.measureText(text).width) + 36);
   const x = (256 - width) / 2;
@@ -285,11 +289,182 @@ function nameSprite(text, color) {
   g.fillText(text, 128, 33);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false });
+  // Un mip más nítido: el muestreo por defecto dejaba las letras borrosas.
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "vec4 sampledDiffuseColor = texture2D( map, vMapUv );",
+      "vec4 sampledDiffuseColor = texture2D( map, vMapUv, -0.85 );",
+    );
+  };
   const sprite = new THREE.Sprite(mat);
   sprite.center.set(0.5, 0);
   sprite.renderOrder = 10;
   return sprite;
+}
+
+const MARKET_BUILDINGS = new Set(["house", "shop", "building", "tower"]);
+const MARKET_VEHICLES = new Set(["car", "van", "bus"]);
+const MARKET_PLACES = new Set(["kiosk", "fountain", "statue", "playset", "busstop", "pool"]);
+
+function marketZone(x, z) {
+  const dist = Math.hypot(x, z);
+  if (dist < 48) return "Centro";
+  if (dist < 92) return x < 0 ? "Distrito Oeste" : "Distrito Este";
+  if (z < 0) return "Barrio Costero Sur";
+  return "Barrio Costero Norte";
+}
+
+function marketPrice(category, x, z, kind = "") {
+  const centrality = Math.max(0, 1 - Math.hypot(x, z) / ISLAND);
+  const base = { parcel: 420, building: 310, vehicle: 95, place: 160 }[category];
+  const premium = kind === "tower" ? 260 : kind === "building" ? 140 : 0;
+  return Math.round((base + centrality * base * 1.35 + premium) / 10) * 10;
+}
+
+function assetName(category, kind, index) {
+  const serial = String(index + 1).padStart(2, "0");
+  const names = {
+    house: "Casa de barrio",
+    shop: "Local comercial",
+    building: "Edificio urbano",
+    tower: "Torre central",
+    car: "Auto urbano",
+    van: "Van de reparto",
+    bus: "Vehículo especial",
+    kiosk: "Kiosco de plaza",
+    fountain: "Fuente pública",
+    statue: "Monumento",
+    playset: "Área de juegos",
+    busstop: "Parada urbana",
+    pool: "Club de piscina",
+  };
+  return `${names[kind] || (category === "place" ? "Espacio urbano" : "Activo")} ${serial}`;
+}
+
+function buildMarketInventory(objects, mapPlan) {
+  const items = [];
+  for (let index = 0; index < mapPlan.blocks.length; index++) {
+    const block = mapPlan.blocks[index];
+    const zone = marketZone(block.x, block.z);
+    items.push({
+      id: `parcel-${Math.round(block.x)}-${Math.round(block.z)}`,
+      shortId: `MZ-${String(index + 1).padStart(2, "0")}`,
+      category: "parcel",
+      name: `Manzana ${zone} ${String(index + 1).padStart(2, "0")}`,
+      description: "Una ubicación completa para convertirla en la sede visible de tu marca.",
+      zone,
+      reach: block.kind === "down" ? "Muy alta" : block.kind === "plaza" ? "Alta" : "Media",
+      price: marketPrice("parcel", block.x, block.z, block.kind),
+      x: block.x,
+      z: block.z,
+      height: block.kind === "down" ? 16 : 9,
+      target: block,
+    });
+  }
+  const counts = { building: 0, vehicle: 0, place: 0 };
+  objects.forEach((object, objectIndex) => {
+    let category = "";
+    if (MARKET_BUILDINGS.has(object.kind)) category = "building";
+    else if (MARKET_VEHICLES.has(object.kind)) category = "vehicle";
+    else if (MARKET_PLACES.has(object.kind)) category = "place";
+    if (!category) return;
+    const index = counts[category]++;
+    const zone = marketZone(object.x, object.z);
+    items.push({
+      id: `asset-${objectIndex}`,
+      shortId: `${category === "building" ? "ED" : category === "vehicle" ? "VH" : "EP"}-${String(index + 1).padStart(3, "0")}`,
+      category,
+      name: assetName(category, object.kind, index),
+      description:
+        category === "building"
+          ? "Tu identidad en la fachada de uno de los edificios que protagonizan la ciudad."
+          : category === "vehicle"
+            ? "Una presencia móvil y llamativa que recorre el mapa durante cada partida."
+            : "Un punto de encuentro reconocible para que tu marca forme parte del recorrido.",
+      zone,
+      reach: Math.hypot(object.x, object.z) < 72 ? "Alta" : "Media",
+      price: marketPrice(category, object.x, object.z, object.kind),
+      x: object.x,
+      z: object.z,
+      height: object.height,
+      target: object,
+    });
+  });
+  return items;
+}
+
+function brandSprite(record) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 160;
+  const ctx = canvas.getContext("2d");
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+
+  const paint = (image = null) => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.shadowColor = "rgba(15, 23, 42, .3)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, 18, 16, 476, 118, 28);
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.fillStyle = record.color || "#2257e6";
+    roundRect(ctx, 30, 28, 92, 92, 22);
+    ctx.fill();
+    if (image) {
+      ctx.save();
+      roundRect(ctx, 36, 34, 80, 80, 17);
+      ctx.clip();
+      const scale = Math.max(80 / image.width, 80 / image.height);
+      const width = image.width * scale;
+      const height = image.height * scale;
+      ctx.drawImage(image, 76 - width / 2, 74 - height / 2, width, height);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 34px Avenir Next, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(record.company.slice(0, 2).toUpperCase(), 76, 75);
+    }
+    ctx.fillStyle = "#141820";
+    ctx.font = "900 34px Avenir Next, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    const label = record.company.length > 22 ? `${record.company.slice(0, 21)}…` : record.company;
+    ctx.fillText(label, 142, 66);
+    ctx.fillStyle = "#667085";
+    ctx.font = "700 20px Avenir Next, sans-serif";
+    ctx.fillText("ESPACIO OFICIAL", 142, 99);
+    texture.needsUpdate = true;
+  };
+  paint();
+  if (record.logo) {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => paint(image);
+    image.src = record.logo;
+  }
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    toneMapped: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(11.5, 3.6, 1);
+  sprite.renderOrder = 12;
+  return sprite;
+}
+
+function disposeBrandSprite(sprite) {
+  sprite.material.map?.dispose();
+  sprite.material.dispose();
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -486,6 +661,8 @@ export async function mountGame(canvas, hooks) {
   let camYawGoal = 0;
   let shake = 0;
   let player = null;
+  let marketFocus = null;
+  let marketOrbit = 0;
   const pointer = new THREE.Vector2();
   let pointerReady = false;
   const aimRay = new THREE.Raycaster();
@@ -500,7 +677,42 @@ export async function mountGame(canvas, hooks) {
   await loadProps();
   for (const material of propMaterials()) enablePitClip(material);
   const mapPlan = buildCity(scene, objects, rand);
+  const marketItems = buildMarketInventory(objects, mapPlan);
+  const brandMarkers = new Map();
   followSun(true);
+
+  function focusMarketItem(id) {
+    marketFocus = marketItems.find((item) => item.id === id) || marketItems[0] || null;
+    marketOrbit = 0.62;
+  }
+
+  function setBrandings(records) {
+    for (const marker of brandMarkers.values()) {
+      scene.remove(marker);
+      disposeBrandSprite(marker);
+    }
+    brandMarkers.clear();
+    for (const record of records) {
+      const item = marketItems.find((candidate) => candidate.id === record.itemId);
+      if (!item) continue;
+      const marker = brandSprite(record);
+      marker.userData.marketItem = item;
+      marker.userData.url = record.url;
+      marker.userData.company = record.company;
+      brandMarkers.set(item.id, marker);
+      scene.add(marker);
+    }
+    updateBrandMarkers();
+  }
+
+  function updateBrandMarkers() {
+    for (const marker of brandMarkers.values()) {
+      const item = marker.userData.marketItem;
+      const target = item.target;
+      marker.position.set(target.x, (target.y || 0) + Math.max(3.6, item.height + 1.8), target.z);
+      marker.visible = !target.state || target.state === "idle";
+    }
+  }
 
   const particles = [];
   const CRUMBS = 72;
@@ -549,6 +761,13 @@ export async function mountGame(canvas, hooks) {
     followSun(true);
   }
 
+  function returnToMenu() {
+    if (phase !== "play") return;
+    phase = "menu";
+    for (const hole of holes) hole.group.visible = false;
+    for (const value of holeXZR) value.set(0, 0, 0);
+  }
+
   function finish() {
     phase = "end";
     timeLeft = 0;
@@ -570,6 +789,7 @@ export async function mountGame(canvas, hooks) {
     settleObjects(dt);
     for (const obj of objects) stepFall(obj, dt);
     eatHoles(dt);
+    if (phase !== "play") return;
     for (const hole of holes) syncHole(hole, dt);
     updateParticles(dt);
     followCamera(dt);
@@ -664,6 +884,7 @@ export async function mountGame(canvas, hooks) {
   function steerHoles(dt) {
     for (const hole of holes) {
       if (!hole.alive) {
+        if (hole.player) continue;
         hole.respawn -= dt;
         if (hole.respawn <= 0) revive(hole);
         continue;
@@ -1047,6 +1268,8 @@ export async function mountGame(canvas, hooks) {
           toast = "¡Te tragaron!";
           toastUntil = performance.now() + 1600;
           sfx.eaten();
+          returnToMenu();
+          mountGame._api.onPlayerDeath?.();
         } else if (hunter.player) {
           popText(`+${Math.round(prey.mass * 0.65 + 12)}`, prey.x, 1, prey.z);
           sfx.rival();
@@ -1130,7 +1353,7 @@ export async function mountGame(canvas, hooks) {
     hole.lip.material.opacity = rimOpacity;
     hole.label.position.y = 1.35 + visual * 0.22;
     const dist = camera.position.distanceTo(hole.group.position);
-    const labelW = Math.max(1.45, dist * 0.082);
+    const labelW = Math.max(2.25, dist * 0.128);
     hole.label.scale.set(labelW, labelW * 0.25, 1);
   }
 
@@ -1454,11 +1677,27 @@ export async function mountGame(canvas, hooks) {
       camera.position.set(Math.sin(camOrbit) * 52, 34, Math.cos(camOrbit) * 52);
       camera.lookAt(0, 0, 0);
       driftCity(dt);
+    } else if (phase === "market") {
+      const item = marketFocus || marketItems[0];
+      const target = item?.target;
+      if (target) {
+        marketOrbit += dt * 0.08;
+        const radius = item.category === "parcel" ? 33 : item.category === "building" ? 20 : 13;
+        const height = item.category === "parcel" ? 27 : Math.max(9, item.height + 7);
+        camera.position.set(
+          target.x + Math.sin(marketOrbit) * radius,
+          height,
+          target.z + Math.cos(marketOrbit) * radius,
+        );
+        camera.lookAt(target.x, Math.min(item.height * 0.42, 6), target.z);
+      }
+      driftCity(dt);
     } else if (phase === "play") {
       timeLeft -= dt;
       if (timeLeft <= 0) finish();
       else simulate(dt);
     }
+    updateBrandMarkers();
     flushBatches(camera, scene.fog.far);
     flushShadowCasters(renderer, shadowX, shadowZ, shadowSpan);
     renderer.render(scene, camera);
@@ -1485,6 +1724,35 @@ export async function mountGame(canvas, hooks) {
 
   const api = {
     start,
+    returnToMenu,
+    getMarketItems() {
+      return marketItems.map(({ target, ...item }) => ({ ...item }));
+    },
+    openMarketplace(id) {
+      phase = "market";
+      focusMarketItem(id);
+    },
+    closeMarketplace() {
+      phase = "menu";
+      marketFocus = null;
+    },
+    showcaseMarketItem(id) {
+      phase = "market";
+      focusMarketItem(id);
+    },
+    focusMarketItem,
+    setBrandings,
+    visitBrandAt(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      aimRay.setFromCamera(pointer, camera);
+      const hit = aimRay.intersectObjects([...brandMarkers.values()], false)[0];
+      const url = hit?.object.userData.url;
+      if (!url) return false;
+      window.open(url, "_blank", "noopener,noreferrer");
+      return true;
+    },
     setPointer(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -1494,6 +1762,7 @@ export async function mountGame(canvas, hooks) {
     rotateCamera(radians) {
       camYawGoal += radians;
     },
+    onPlayerDeath: null,
     onEnd: null,
     destroy() {
       window.removeEventListener("resize", onResize);
