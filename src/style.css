@@ -224,6 +224,11 @@ h2 {
   outline: none;
 }
 
+.field input::placeholder {
+  color: #a3acb8;
+  font-weight: 700;
+}
+
 .colors {
   display: flex;
   justify-content: center;

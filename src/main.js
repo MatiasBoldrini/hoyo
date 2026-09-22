@@ -20,7 +20,7 @@ const endScore = document.querySelector("#end-score");
 const loading = document.querySelector("#loading");
 
 const saved = localStorage.getItem("hoyo-name");
-if (saved) nick.value = saved;
+if (saved && saved !== "Jugador") nick.value = saved;
 let color = Number(localStorage.getItem("hoyo-color") || PLAYER_COLORS[0]);
 
 for (const value of PLAYER_COLORS) {
@@ -42,14 +42,7 @@ const game = await mountGame(canvas, {
     loading.hidden = true;
   },
   onFrame(state) {
-    document.documentElement.style.setProperty("--danger", state.danger.toFixed(3));
-    if (state.phase === "play") {
-      timer.textContent = formatTime(state.timeLeft);
-      renderRows(board, state.rows);
-      drawMinimap(state.map, state.me);
-      toast.hidden = !state.toast;
-      toast.textContent = state.toast || "";
-    }
+    paintHud(state);
   },
   onPopup(text, x, y) {
     const pop = document.createElement("div");
@@ -62,20 +55,89 @@ const game = await mountGame(canvas, {
   },
 });
 
+const hudState = { danger: "", time: "", rows: "", toast: null, map: null, dot: "" };
+const mapLayer = document.createElement("canvas");
+mapLayer.width = minimap.width;
+mapLayer.height = minimap.height;
+const mapLayerCtx = mapLayer.getContext("2d");
+
+function paintHud(state) {
+  const danger = state.danger.toFixed(2);
+  if (danger !== hudState.danger) {
+    hudState.danger = danger;
+    document.documentElement.style.setProperty("--danger", danger);
+  }
+  if (state.phase !== "play") return;
+  const time = formatTime(state.timeLeft);
+  if (time !== hudState.time) {
+    hudState.time = time;
+    timer.textContent = time;
+  }
+  const rows = boardKey(state.rows);
+  if (rows !== hudState.rows) {
+    hudState.rows = rows;
+    renderRows(board, state.rows);
+  }
+  const toastText = state.toast || "";
+  if (toastText !== hudState.toast) {
+    hudState.toast = toastText;
+    toast.hidden = toastText === "";
+    toast.textContent = toastText;
+  }
+  drawMinimap(state.map, state.me);
+}
+
 function formatTime(seconds) {
   const s = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function boardKey(rows) {
+  let key = "";
+  for (const row of rows) {
+    key += `${row.rank}\0${row.name}\0${row.score}\0${row.color}\0${row.me ? 1 : 0}\n`;
+  }
+  return key;
+}
+
 function drawMinimap(plan, me) {
+  if (!plan) return;
+  if (hudState.map !== plan) {
+    hudState.map = plan;
+    hudState.dot = "";
+    drawMapLayer(mapLayerCtx, plan);
+  }
   const size = minimap.width;
-  const ctx = mapCtx;
+  const center = size / 2;
+  const scale = (center - 3) / plan.span;
+  const dot = me ? `${Math.round(center + me.x * scale)}:${Math.round(center + me.z * scale)}:${me.color}` : "";
+  if (dot === hudState.dot) return;
+  hudState.dot = dot;
+  mapCtx.clearRect(0, 0, size, size);
+  mapCtx.drawImage(mapLayer, 0, 0);
+  if (!me) return;
+  const [x, y] = dot.split(":");
+  mapCtx.save();
+  mapCtx.beginPath();
+  mapCtx.arc(center, center, center - 3, 0, Math.PI * 2);
+  mapCtx.clip();
+  mapCtx.beginPath();
+  mapCtx.arc(Number(x), Number(y), 6, 0, Math.PI * 2);
+  mapCtx.fillStyle = me.color;
+  mapCtx.fill();
+  mapCtx.lineWidth = 2;
+  mapCtx.strokeStyle = "#ffffff";
+  mapCtx.stroke();
+  mapCtx.restore();
+}
+
+function drawMapLayer(ctx, plan) {
+  const size = mapLayer.width;
   const center = size / 2;
   const reach = center - 3;
-  ctx.clearRect(0, 0, size, size);
-  if (!plan) return;
   const scale = reach / plan.span;
   const project = (x, z) => [center + x * scale, center + z * scale];
+  ctx.clearRect(0, 0, size, size);
   ctx.save();
   ctx.beginPath();
   ctx.arc(center, center, reach, 0, Math.PI * 2);
@@ -116,16 +178,6 @@ function drawMinimap(plan, me) {
     ctx.fill("evenodd");
   }
   ctx.restore();
-  if (me) {
-    const [x, y] = project(me.x, me.z);
-    ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
-    ctx.fillStyle = me.color;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#ffffff";
-    ctx.stroke();
-  }
   ctx.restore();
 }
 

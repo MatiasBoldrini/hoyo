@@ -1,4 +1,4 @@
-const HEAVY = new Set(["house", "building", "tower", "fountain", "bus"]);
+const HEAVY = new Set(["house", "building", "tower", "fountain", "bus", "shop", "statue"]);
 const CRUNCH = new Set(["car", "van", "tree", "lamp", "bench", "cone", "hydrant", "bin", "fence"]);
 
 // Grabaciones CC0, recortadas al golpe. No son síntesis.

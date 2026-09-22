@@ -2,36 +2,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-// Modelos CC0 de Kenney (kenney.nl): City Kit Suburban, Commercial y Roads,
-// Car Kit, y Blocky Characters. No están modelados en el juego.
+// Modelos CC0 de Kenney (kenney.nl): árboles, autos y mobiliario.
+// Casas, negocios, edificios, fuentes, kioscos, juegos, etc. se arman con cajas
+// y cilindros pintados por vértice (ver COMPOSITES). La gente no se usa.
 const CATALOG = [
-  {
-    kind: "house",
-    dir: "suburb",
-    files: letters("a", "u").map((ch) => `building-type-${ch}.glb`),
-    fit: { footprint: 5.4 },
-    mass: 48,
-    heavy: true,
-    variations: ["variation-a.png", "variation-b.png", "variation-c.png"],
-  },
-  {
-    kind: "building",
-    dir: "commercial",
-    files: letters("a", "n").map((ch) => `building-${ch}.glb`),
-    fit: { footprint: 6.2 },
-    mass: 72,
-    heavy: true,
-    variations: ["variation-a.png", "variation-b.png"],
-  },
-  {
-    kind: "tower",
-    dir: "commercial",
-    files: letters("a", "e").map((ch) => `building-skyscraper-${ch}.glb`),
-    fit: { footprint: 7.2 },
-    mass: 110,
-    heavy: true,
-    variations: ["variation-a.png", "variation-b.png"],
-  },
   {
     kind: "tree",
     dir: "suburb",
@@ -102,15 +76,6 @@ const CATALOG = [
     heavy: true,
   },
   {
-    kind: "person",
-    dir: "people",
-    files: ["female", "male"].flatMap((gender) => letters("a", "f").map((ch) => `character-${gender}-${ch}.glb`)),
-    fit: { height: 1.65 },
-    mass: 4,
-    heavy: false,
-    pose: "idle",
-  },
-  {
     kind: "cone",
     dir: "street",
     files: ["construction-cone.glb"],
@@ -173,12 +138,6 @@ const texByUrl = new Map();
 const loader = new GLTFLoader();
 const texLoader = new THREE.TextureLoader();
 
-function letters(from, to) {
-  const out = [];
-  for (let code = from.charCodeAt(0); code <= to.charCodeAt(0); code++) out.push(String.fromCharCode(code));
-  return out;
-}
-
 function loadGltf(url) {
   return loader.loadAsync(url);
 }
@@ -200,6 +159,313 @@ function loadTexture(url) {
   });
   texByUrl.set(url, pending);
   return pending;
+}
+
+// Props armados con cajas y cilindros pintados por vértice: un solo material
+// compartido, así cada variante entra en un InstancedMesh propio.
+let paintMat = null;
+function paint() {
+  if (paintMat) return paintMat;
+  paintMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  materials.push(paintMat);
+  return paintMat;
+}
+
+const _tint = new THREE.Color();
+function tint(geo, hex) {
+  _tint.set(hex);
+  const count = geo.getAttribute("position").count;
+  const arr = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    arr[i * 3] = _tint.r;
+    arr[i * 3 + 1] = _tint.g;
+    arr[i * 3 + 2] = _tint.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
+function box(w, h, d, color, x = 0, y = 0, z = 0) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  geo.translate(x, y + h / 2, z);
+  return tint(geo, color);
+}
+
+function cyl(rTop, rBottom, h, color, x = 0, y = 0, z = 0, seg = 12) {
+  const geo = new THREE.CylinderGeometry(rTop, rBottom, h, seg);
+  geo.translate(x, y + h / 2, z);
+  return tint(geo, color);
+}
+
+function pyramid(r, h, color, x = 0, y = 0, z = 0) {
+  const geo = new THREE.CylinderGeometry(0, r, h, 4, 1);
+  geo.rotateY(Math.PI / 4);
+  geo.translate(x, y + h / 2, z);
+  return tint(geo, color);
+}
+
+function gable(w, h, d, color, x = 0, y = 0, z = 0) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-w / 2, 0);
+  shape.lineTo(w / 2, 0);
+  shape.lineTo(0, h);
+  shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false });
+  geo.translate(x, y, z - d / 2);
+  return tint(geo, color);
+}
+
+function slab(w, h, d, color, tiltX, x, y, z) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  geo.rotateX(tiltX);
+  geo.translate(x, y, z);
+  return tint(geo, color);
+}
+
+function assemble(parts, mass, heavy) {
+  // ExtrudeGeometry no tiene índice; se unifica todo sin índice para poder mergear.
+  const flat = parts.map((part) => (part.index ? part.toNonIndexed() : part));
+  const merged = mergeGeometries(flat, false);
+  for (const part of parts) part.dispose();
+  for (const part of flat) if (!parts.includes(part)) part.dispose();
+  merged.computeBoundingBox();
+  const b = merged.boundingBox;
+  const hx = Math.max(Math.abs(b.min.x), Math.abs(b.max.x));
+  const hz = Math.max(Math.abs(b.min.z), Math.abs(b.max.z));
+  return {
+    geo: merged,
+    eatR: Math.max(0.28, Math.max(hx, hz)),
+    solidR: Math.max(0.16, Math.min(hx, hz)),
+    height: Math.max(0.1, b.max.y),
+    material: paint(),
+    mass,
+    heavy,
+  };
+}
+
+const WALLS = [0xf6efe2, 0xe9d5b5, 0xd9b99a, 0xcfd8cc, 0xf2c9b8, 0xbfd6e6, 0xe6e0c8, 0xf5dba0];
+const ROOFS = [0xc9553f, 0x5d6b7a, 0x4f7a5a, 0x8a5a44, 0xd8a15c, 0x9c4b5c];
+const FACADES = [0x8ea4ae, 0x7d9388, 0xb9a08a, 0xa86b52, 0x6f848c, 0xc8c2b4, 0x9aa6a2];
+const GLASS = 0x7fb4d4;
+const WOOD = 0x8a5a3c;
+const STONE = 0xd9d4c7;
+const METAL = 0x9aa3a8;
+const BRIGHT = [0xff5a5f, 0xffc93c, 0x3fa7d6, 0x59c26b, 0xff8c42];
+
+function houseSpec(i) {
+  const w = [5.2, 4.6, 5.8, 4.8][i % 4];
+  const d = [4.4, 5.0, 4.2, 4.6][i % 4];
+  const h = [3.0, 3.6, 2.8, 4.2][i % 4];
+  const wall = WALLS[i % WALLS.length];
+  const roof = ROOFS[(i * 5 + 1) % ROOFS.length];
+  const parts = [box(w, h, d, wall)];
+  if (i % 3 === 0) parts.push(gable(w + 0.6, 1.9, d + 0.6, roof, 0, h));
+  else parts.push(pyramid(Math.hypot(w, d) * 0.56, 1.7, roof, 0, h));
+  parts.push(box(0.9, 1.7, 0.12, WOOD, (i % 2 ? 1 : -1) * 0.9, 0, d / 2 + 0.02));
+  parts.push(box(1.0, 0.9, 0.1, GLASS, (i % 2 ? -1 : 1) * 1.1, 1.3, d / 2 + 0.02));
+  parts.push(box(0.1, 0.9, 1.0, GLASS, w / 2 + 0.02, 1.3, 0.4));
+  if (i % 4 === 1) parts.push(box(0.6, h + 2.2, 0.6, 0x7a6a62, -w * 0.3, 0, -d * 0.2));
+  return assemble(parts, 48, true);
+}
+
+function shopSpec(i) {
+  const w = [7.2, 6.4, 8.0][i % 3];
+  const d = [5.0, 5.4, 4.6][i % 3];
+  const h = [3.6, 4.2, 3.4][i % 3];
+  const wall = FACADES[(i * 3 + 2) % FACADES.length];
+  const stripe = BRIGHT[i % BRIGHT.length];
+  const parts = [box(w, h, d, wall)];
+  parts.push(box(w + 0.2, 0.3, d + 0.2, 0x5a5f66, 0, h));
+  parts.push(box(w * 0.7, 1.4, 0.12, GLASS, 0, 0.6, d / 2 + 0.02));
+  parts.push(box(w * 0.8, 0.5, 0.14, 0xffffff, 0, h - 1.0, d / 2 + 0.03));
+  const stripes = 6;
+  const sw = (w * 0.86) / stripes;
+  for (let s = 0; s < stripes; s++) {
+    parts.push(slab(sw, 0.1, 1.4, s % 2 ? stripe : 0xf8f4ea, 0.42, -w * 0.43 + sw * (s + 0.5), 2.45, d / 2 + 0.55));
+  }
+  return assemble(parts, 44, true);
+}
+
+function buildingSpec(i) {
+  const w = [6.0, 5.4, 6.4, 5.2][i % 4];
+  const d = [5.4, 5.6, 5.2, 5.2][i % 4];
+  const h = [8.0, 11.0, 9.2, 14.0][i % 4];
+  const wall = FACADES[i % FACADES.length];
+  const parts = [box(w, h, d, wall)];
+  for (let y = 1.6; y < h - 1.2; y += 3.0) parts.push(box(w + 0.08, 0.9, d + 0.08, GLASS, 0, y));
+  parts.push(box(w * 0.9, 0.35, d * 0.9, 0x525a60, 0, h));
+  parts.push(box(1.2, 0.8, 1.0, METAL, w * 0.2, h + 0.35, -d * 0.15));
+  parts.push(box(1.6, 2.2, 0.1, WOOD, 0, 0, d / 2 + 0.02));
+  return assemble(parts, 72, true);
+}
+
+function towerSpec(i) {
+  const w = [6.2, 5.6, 6.8][i % 3];
+  const h = [16, 20, 24][i % 3];
+  const wall = [0x667b86, 0x73848a, 0x5e727c][i % 3];
+  const parts = [box(w, h, w, wall)];
+  for (let y = 1.8; y < h - 1.5; y += 2.6) parts.push(box(w + 0.08, 1.1, w + 0.08, 0x9fcbe3, 0, y));
+  parts.push(box(w * 0.7, 1.2, w * 0.7, 0x4b5960, 0, h));
+  parts.push(cyl(0.08, 0.12, 3.2, METAL, 0, h + 1.2, 0, 6));
+  parts.push(box(w * 1.15, 0.5, w * 1.15, 0x4b5960, 0, 0));
+  return assemble(parts, 110, true);
+}
+
+function fountainSpec(i) {
+  const water = [0x5cc8f0, 0x4fb8e8][i % 2];
+  const parts = [
+    cyl(2.3, 2.4, 0.6, STONE, 0, 0, 0, 20),
+    cyl(2.05, 2.05, 0.1, water, 0, 0.5, 0, 20),
+    cyl(0.32, 0.4, 1.5, STONE, 0, 0.5, 0, 10),
+    cyl(0.95, 0.55, 0.35, STONE, 0, 1.95, 0, 14),
+    cyl(0.8, 0.8, 0.08, water, 0, 2.28, 0, 14),
+    cyl(0.12, 0.16, 0.7, STONE, 0, 2.3, 0, 8),
+  ];
+  return assemble(parts, 26, true);
+}
+
+function statueSpec(i) {
+  const bronze = [0x7c6a4e, 0x6f7a6c][i % 2];
+  const parts = [
+    box(1.8, 1.0, 1.8, 0xbfb8ad),
+    box(1.2, 0.5, 1.2, 0xd0cac0, 0, 1.0),
+    cyl(0.32, 0.4, 2.0, bronze, 0, 1.5, 0, 10),
+    box(1.1, 0.35, 0.5, bronze, 0, 3.0, 0),
+    cyl(0.36, 0.36, 0.5, bronze, 0, 3.35, 0, 10),
+  ];
+  return assemble(parts, 30, true);
+}
+
+function kioskSpec(i) {
+  const body = WALLS[(i * 3) % WALLS.length];
+  const roof = BRIGHT[i % BRIGHT.length];
+  const parts = [
+    box(2.2, 2.1, 2.0, body),
+    box(2.4, 0.12, 0.6, WOOD, 0, 1.0, 1.2),
+    box(1.8, 0.9, 0.1, GLASS, 0, 1.1, 1.02),
+    pyramid(1.9, 0.9, roof, 0, 2.1),
+    box(2.6, 0.12, 2.4, roof, 0, 2.05),
+  ];
+  return assemble(parts, 10, false);
+}
+
+function busStopSpec(i) {
+  const color = [0x3a4750, 0x2f6b8a][i % 2];
+  const parts = [
+    cyl(0.07, 0.07, 2.5, METAL, -1.4, 0, -0.5, 6),
+    cyl(0.07, 0.07, 2.5, METAL, 1.4, 0, -0.5, 6),
+    box(3.2, 0.14, 1.5, color, 0, 2.5, 0),
+    box(3.0, 1.5, 0.08, GLASS, 0, 0.9, -0.6),
+    box(2.6, 0.12, 0.5, WOOD, 0, 0.5, -0.1),
+    box(0.1, 0.5, 0.4, METAL, -1.1, 0, -0.1),
+    box(0.1, 0.5, 0.4, METAL, 1.1, 0, -0.1),
+  ];
+  return assemble(parts, 8, false);
+}
+
+function hydrantSpec() {
+  const parts = [
+    cyl(0.17, 0.19, 0.62, 0xe03c3c, 0, 0, 0, 8),
+    cyl(0.1, 0.16, 0.16, 0xe03c3c, 0, 0.62, 0, 8),
+    box(0.5, 0.14, 0.14, 0xe03c3c, 0, 0.36, 0),
+    box(0.14, 0.14, 0.3, 0xe03c3c, 0, 0.36, 0.1),
+  ];
+  return assemble(parts, 2, false);
+}
+
+function mailboxSpec(i) {
+  const color = [0x3f7ad8, 0xd84545, 0x3aa457][i % 3];
+  const parts = [box(0.12, 1.0, 0.12, METAL), box(0.55, 0.38, 0.36, color, 0, 1.0)];
+  return assemble(parts, 2, false);
+}
+
+function shedSpec(i) {
+  const wall = [0x9c7a5a, 0x7f8a94, 0xb4a48a][i % 3];
+  const parts = [box(2.4, 2.1, 2.0, wall), gable(2.8, 1.0, 2.4, ROOFS[(i + 2) % ROOFS.length], 0, 2.1), box(0.7, 1.5, 0.08, 0x5a4232, 0, 0, 1.02)];
+  return assemble(parts, 12, false);
+}
+
+function poolSpec(i) {
+  const w = [4.4, 3.6][i % 2];
+  const d = [3.0, 3.4][i % 2];
+  const parts = [box(w, 0.26, d, 0xf1f1ee), box(w - 0.5, 0.3, d - 0.5, 0x4fc3f7, 0, 0.02)];
+  return assemble(parts, 6, false);
+}
+
+function hedgeSpec(i) {
+  const w = [2.6, 2.0, 3.2][i % 3];
+  return assemble([box(w, 0.9, 0.7, [0x4f9a3f, 0x5fae4a, 0x3f8a3a][i % 3])], 3, false);
+}
+
+function picnicSpec() {
+  const parts = [
+    box(1.8, 0.1, 0.8, WOOD, 0, 0.72),
+    box(1.8, 0.08, 0.32, WOOD, 0, 0.42, 0.72),
+    box(1.8, 0.08, 0.32, WOOD, 0, 0.42, -0.72),
+    box(0.1, 0.72, 1.7, 0x6b4630, -0.7, 0, 0),
+    box(0.1, 0.72, 1.7, 0x6b4630, 0.7, 0, 0),
+  ];
+  return assemble(parts, 5, false);
+}
+
+function playsetSpec(i) {
+  const a = BRIGHT[i % BRIGHT.length];
+  const b = BRIGHT[(i + 2) % BRIGHT.length];
+  const parts = [box(2.0, 0.16, 2.0, a, 0, 1.3)];
+  for (const [sx, sz] of [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ]) {
+    parts.push(cyl(0.08, 0.08, 2.9, METAL, sx * 0.9, 0, sz * 0.9, 6));
+  }
+  parts.push(pyramid(1.7, 0.9, b, 0, 2.9));
+  parts.push(slab(0.8, 0.1, 3.0, b, 0.42, 0, 0.72, 2.25));
+  parts.push(box(0.1, 0.9, 2.0, a, 0.95, 1.46, 0));
+  return assemble(parts, 14, false);
+}
+
+function swingSpec(i) {
+  const color = BRIGHT[(i + 1) % BRIGHT.length];
+  const parts = [box(3.2, 0.14, 0.14, color, 0, 2.3)];
+  for (const sx of [-1.5, 1.5]) {
+    parts.push(cyl(0.07, 0.07, 2.35, color, sx, 0, -0.55, 6));
+    parts.push(cyl(0.07, 0.07, 2.35, color, sx, 0, 0.55, 6));
+  }
+  for (const sx of [-0.7, 0.7]) {
+    parts.push(box(0.5, 0.06, 0.26, WOOD, sx, 0.62));
+    parts.push(box(0.03, 1.65, 0.03, METAL, sx - 0.22, 0.68));
+    parts.push(box(0.03, 1.65, 0.03, METAL, sx + 0.22, 0.68));
+  }
+  return assemble(parts, 8, false);
+}
+
+const COMPOSITES = [
+  ["house", 8, houseSpec],
+  ["shop", 6, shopSpec],
+  ["building", 8, buildingSpec],
+  ["tower", 3, towerSpec],
+  ["fountain", 2, fountainSpec],
+  ["statue", 2, statueSpec],
+  ["kiosk", 5, kioskSpec],
+  ["busstop", 2, busStopSpec],
+  ["hydrant", 1, hydrantSpec],
+  ["mailbox", 3, mailboxSpec],
+  ["shed", 3, shedSpec],
+  ["pool", 2, poolSpec],
+  ["hedge", 3, hedgeSpec],
+  ["picnic", 1, picnicSpec],
+  ["playset", 3, playsetSpec],
+  ["swing", 2, swingSpec],
+];
+
+function seedBlocks() {
+  for (const [kind, count, build] of COMPOSITES) {
+    const list = [];
+    for (let i = 0; i < count; i++) list.push(build(i));
+    pools.set(kind, list);
+  }
 }
 
 function lambert(map) {
@@ -337,6 +603,7 @@ async function loadEntry(entry) {
 }
 
 export async function loadProps() {
+  seedBlocks();
   await Promise.all(CATALOG.map((entry) => loadEntry(entry)));
 }
 
