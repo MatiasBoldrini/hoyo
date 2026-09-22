@@ -236,6 +236,8 @@ function assemble(parts, mass, heavy) {
     geo: merged,
     eatR: Math.max(0.28, Math.max(hx, hz)),
     solidR: Math.max(0.16, Math.min(hx, hz)),
+    halfX: hx,
+    halfZ: hz,
     height: Math.max(0.1, b.max.y),
     material: paint(),
     mass,
@@ -507,13 +509,55 @@ function bakeMesh(obj) {
   return geo;
 }
 
-function bake(root) {
+const _wheelBox = new THREE.Box3();
+const _wheelSize = new THREE.Vector3();
+const _wheelMid = new THREE.Vector3();
+
+// Las ruedas de Kenney traen ~330-430 triángulos cada una y desde la cámara casi
+// no se ven: se reemplazan por un cilindro de 8 lados pintado con el color de la goma.
+function lowWheel(mesh) {
+  const src = mesh.geometry;
+  const pos = src.getAttribute("position");
+  const uv = src.getAttribute("uv");
+  if (!uv) return null;
+  _wheelBox.setFromBufferAttribute(pos);
+  _wheelBox.getSize(_wheelSize);
+  _wheelBox.getCenter(_wheelMid);
+  const axle = _wheelSize.x <= _wheelSize.y && _wheelSize.x <= _wheelSize.z ? "x" : _wheelSize.z <= _wheelSize.y ? "z" : "y";
+  const radius = axle === "x" ? Math.max(_wheelSize.y, _wheelSize.z) / 2 : axle === "z" ? Math.max(_wheelSize.x, _wheelSize.y) / 2 : Math.max(_wheelSize.x, _wheelSize.z) / 2;
+  let tread = 0;
+  let farthest = -1;
+  for (let i = 0; i < pos.count; i++) {
+    const dx = axle === "x" ? 0 : pos.getX(i) - _wheelMid.x;
+    const dy = axle === "y" ? 0 : pos.getY(i) - _wheelMid.y;
+    const dz = axle === "z" ? 0 : pos.getZ(i) - _wheelMid.z;
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d > farthest) {
+      farthest = d;
+      tread = i;
+    }
+  }
+  const geo = new THREE.CylinderGeometry(radius, radius, _wheelSize[axle], 8);
+  if (axle === "x") geo.rotateZ(Math.PI / 2);
+  else if (axle === "z") geo.rotateX(Math.PI / 2);
+  geo.translate(_wheelMid.x, _wheelMid.y, _wheelMid.z);
+  const uvs = geo.getAttribute("uv");
+  for (let i = 0; i < uvs.count; i++) uvs.setXY(i, uv.getX(tread), uv.getY(tread));
+  geo.applyMatrix4(mesh.matrixWorld);
+  return geo;
+}
+
+function bake(root, lightWheels = false) {
   root.updateMatrixWorld(true);
   const parts = [];
   root.traverse((obj) => {
     if (!obj.isMesh || !obj.geometry) return;
     if (obj.isSkinnedMesh) obj.skeleton.update();
-    parts.push(bakeMesh(obj));
+    const wheel = lightWheels && /wheel/i.test(`${obj.name} ${obj.parent?.name || ""}`);
+    const geo = (wheel && lowWheel(obj)) || bakeMesh(obj);
+    // Sin mapas de normales el tangente no se usa, y así todas las piezas mergean igual.
+    geo.deleteAttribute("tangent");
+    parts.push(geo);
   });
   const geo = parts.length === 1 ? parts[0] : mergeGeometries(parts, false);
   if (!geo) throw new Error("sin geometría");
@@ -541,11 +585,13 @@ function sit(geo, fit) {
     geo,
     eatR: Math.max(0.28, Math.max(hx, hz)),
     solidR: Math.max(0.16, Math.min(hx, hz)),
+    halfX: hx,
+    halfZ: hz,
     height: Math.max(0, finalBox.max.y),
   };
 }
 
-async function posedGeometry(gltf, pose, index) {
+async function posedGeometry(gltf, pose, index, lightWheels) {
   const root = gltf.scene;
   let poseTime = 0;
   if (pose) {
@@ -559,7 +605,7 @@ async function posedGeometry(gltf, pose, index) {
       root.updateMatrixWorld(true);
     }
   }
-  return bake(root);
+  return bake(root, lightWheels);
 }
 
 async function loadEntry(entry) {
@@ -571,7 +617,7 @@ async function loadEntry(entry) {
   const loaded = await Promise.all(
     entry.files.map(async (file, index) => {
       const gltf = await loadGltf(`${base}/${file}`);
-      const geo = await posedGeometry(gltf, entry.pose, index);
+      const geo = await posedGeometry(gltf, entry.pose, index, entry.dir === "cars");
       let map = atlas;
       if (!map) {
         gltf.scene.traverse((obj) => {
@@ -593,6 +639,8 @@ async function loadEntry(entry) {
         geo: shaped.geo,
         eatR: shaped.eatR,
         solidR: shaped.solidR,
+        halfX: shaped.halfX,
+        halfZ: shaped.halfZ,
         height: shaped.height,
         material: shared.get(map),
         mass: entry.mass,
@@ -622,6 +670,8 @@ export function makeProp(kind, rng) {
     mesh,
     eatR: built.eatR,
     solidR: built.solidR,
+    halfX: built.halfX,
+    halfZ: built.halfZ,
     mass: built.mass,
     heavy: built.heavy,
     height: built.height,

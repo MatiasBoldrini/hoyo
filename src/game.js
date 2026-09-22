@@ -14,6 +14,11 @@ const SEA = 268;
 const SKY = 0x8ec8f8;
 const ROUND = 120;
 const START_R = 0.82;
+// Lo que cae tiene que estar sobre el vacío: el aro cubre hasta ~0.82R y el embudo
+// va de 0.88R arriba a 0.5R en el fondo (ver syncHole y createHole).
+const MOUTH = 0.84;
+const PIT_TOP = 0.88;
+const PIT_BOTTOM = 0.5;
 const BOTS = [
   ["Luna", 0xff4d6d],
   ["Nico", 0x4dabf7],
@@ -135,11 +140,18 @@ function axisReach(fixed, margin = 8) {
 
 let pitClipSerial = 0;
 const pitCam = { value: new THREE.Vector3() };
-const pitProjView = { value: new THREE.Matrix4() };
+
+// Tramado Bayer 4x4 para desvanecer props opacos sin ordenar transparencias,
+// y oscurecido cerca del piso como oclusión ambiental barata.
+const PROP_GLSL = `
+float bayer2(vec2 a) { a = floor(a); return fract(dot(a, vec2(0.5, a.y * 0.75))); }
+float bayer4(vec2 a) { return bayer2(0.5 * a) * 0.25 + bayer2(a); }
+float groundAo(float y) { float k = clamp(y / 1.2, 0.0, 1.0); return mix(0.7, 1.0, k * (2.0 - k)); }
+`;
 
 function enablePitClip(material) {
-  const pitKey = `pit-clip-v6-${pitClipSerial++}`;
-  material.transparent = true;
+  const pitKey = `pit-clip-v7-${pitClipSerial++}`;
+  material.transparent = false;
   material.depthWrite = true;
   material.customProgramCacheKey = () => pitKey;
   material.onBeforeCompile = (shader) => {
@@ -162,28 +174,31 @@ varying vec3 vWorldHole;`,
 varying float vFade;
 varying vec3 vWorldHole;
 uniform vec3 uHoleXZR[10];
-uniform vec3 uCam;`,
+uniform vec3 uCam;
+${PROP_GLSL}`,
+      )
+      .replace(
+        "#include <clipping_planes_fragment>",
+        `#include <clipping_planes_fragment>
+if (vFade < 0.999 && vFade <= bayer4(gl_FragCoord.xy)) discard;
+if (vWorldHole.y < -0.02) {
+  bool nearHole = false;
+  bool inMouth = false;
+  float viewS = uCam.y / max(0.35, uCam.y - vWorldHole.y);
+  vec2 ground = uCam.xz + viewS * (vWorldHole.xz - uCam.xz);
+  for (int i = 0; i < 10; i++) {
+    float hr = uHoleXZR[i].z;
+    if (hr <= 0.0) continue;
+    if (distance(vWorldHole.xz, uHoleXZR[i].xy) < hr + 2.4) nearHole = true;
+    if (distance(ground, uHoleXZR[i].xy) < hr * 0.96) inMouth = true;
+  }
+  if (nearHole && !inMouth) discard;
+}`,
       )
       .replace(
         "#include <tonemapping_fragment>",
-        `
-bool nearHole = false;
-bool inMouth = false;
-vec2 ground = vWorldHole.xz;
-if (vWorldHole.y < -0.02) {
-  float viewS = uCam.y / max(0.35, uCam.y - vWorldHole.y);
-  ground = uCam.xz + viewS * (vWorldHole.xz - uCam.xz);
-}
-for (int i = 0; i < 10; i++) {
-  float hr = uHoleXZR[i].z;
-  if (hr <= 0.0) continue;
-  if (distance(vWorldHole.xz, uHoleXZR[i].xy) < hr + 2.4) nearHole = true;
-  if (vWorldHole.y < -0.02 && distance(ground, uHoleXZR[i].xy) < hr * 0.96) inMouth = true;
-}
-if (vWorldHole.y < -0.02 && nearHole && !inMouth) discard;
-gl_FragColor.a *= vFade;
-#include <tonemapping_fragment>
-`,
+        `gl_FragColor.rgb *= groundAo(vWorldHole.y);
+#include <tonemapping_fragment>`,
       );
   };
   return material;
@@ -195,14 +210,12 @@ function fallingMaterial(source) {
   const cached = fallMatCache.get(source);
   if (cached) return cached;
   const mat = source.clone();
-  mat.transparent = true;
-  mat.depthWrite = false;
+  mat.transparent = false;
+  mat.depthWrite = true;
   mat.depthTest = true;
-  mat.customProgramCacheKey = () => "fall-mask-v2";
+  mat.customProgramCacheKey = () => "fall-mask-v5";
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHoleXZR = { value: holeXZR };
-    shader.uniforms.uCam = pitCam;
-    shader.uniforms.uProjView = pitProjView;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vWorldHole;")
       .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvWorldHole = worldPosition.xyz;");
@@ -212,33 +225,25 @@ function fallingMaterial(source) {
         `#include <common>
 varying vec3 vWorldHole;
 uniform vec3 uHoleXZR[10];
-uniform vec3 uCam;
-uniform mat4 uProjView;`,
+${PROP_GLSL}`,
+      )
+      .replace(
+        "#include <clipping_planes_fragment>",
+        `#include <clipping_planes_fragment>
+float mouthR = 0.0;
+if (vWorldHole.y < -0.02) {
+  for (int i = 0; i < 10; i++) {
+    float hr = uHoleXZR[i].z;
+    if (hr > 0.0 && distance(vWorldHole.xz, uHoleXZR[i].xy) < hr * 0.9) mouthR = max(mouthR, hr);
+  }
+  if (mouthR == 0.0) discard;
+}`,
       )
       .replace(
         "#include <tonemapping_fragment>",
-        `
-bool below = vWorldHole.y < -0.02;
-vec2 ground = vWorldHole.xz;
-float denom = uCam.y - vWorldHole.y;
-if (below && abs(denom) > 0.001) {
-  float viewS = uCam.y / denom;
-  ground = uCam.xz + viewS * (vWorldHole.xz - uCam.xz);
-}
-bool inMouth = false;
-for (int i = 0; i < 10; i++) {
-  float hr = uHoleXZR[i].z;
-  if (hr > 0.0 && distance(ground, uHoleXZR[i].xy) < hr * 0.87) inMouth = true;
-}
-if (below && !inMouth) discard;
-if (below && inMouth) {
-  vec4 clip = uProjView * vec4(ground.x, -0.02, ground.y, 1.0);
-  gl_FragDepth = clamp(clip.z / clip.w, -1.0, 1.0) * 0.5 + 0.5;
-} else {
-  gl_FragDepth = gl_FragCoord.z;
-}
-#include <tonemapping_fragment>
-`,
+        `// Se funde en negro a la misma profundidad que las paredes del hoyo (fallBlack en JS).
+gl_FragColor.rgb *= vWorldHole.y < 0.0 ? clamp(1.0 + vWorldHole.y / (0.12 + mouthR * 0.42), 0.0, 1.0) : groundAo(vWorldHole.y);
+#include <tonemapping_fragment>`,
       );
   };
   fallMatCache.set(source, mat);
@@ -265,7 +270,7 @@ function nameSprite(text, color) {
   g.fillText(text, 128, 33);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false });
   const sprite = new THREE.Sprite(mat);
   sprite.center.set(0.5, 0);
   sprite.renderOrder = 10;
@@ -282,16 +287,45 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// Un hoyo más grande tapa al chico: el fragmento se descarta si cae dentro del radio exterior del mayor.
+const COVER_DECL = `
+uniform vec3 uHoleXZR[10];
+uniform float uSelfR;
+`;
+const COVER_DISCARD = `
+for (int i = 0; i < 10; i++) {
+  float hr = uHoleXZR[i].z;
+  if (hr > uSelfR * 1.04 && distance(vCoverWorld.xz, uHoleXZR[i].xy) < hr * 1.06) discard;
+}
+`;
+
+let rimCoverSerial = 0;
+
 // Aro grueso y redondeado del color del jugador, con brillo arriba.
 function rimMaterial(color) {
   const tint = new THREE.Color(color);
-  return new THREE.MeshStandardMaterial({
+  const uSelfR = { value: START_R };
+  const mat = new THREE.MeshStandardMaterial({
     color: tint,
     roughness: 0.3,
     metalness: 0.04,
     emissive: tint.clone().multiplyScalar(0.26),
     transparent: true,
   });
+  const key = `rim-cover-v1-${rimCoverSerial++}`;
+  mat.customProgramCacheKey = () => key;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uHoleXZR = { value: holeXZR };
+    shader.uniforms.uSelfR = uSelfR;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vCoverWorld;")
+      .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCoverWorld = worldPosition.xyz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\nvarying vec3 vCoverWorld;\n${COVER_DECL}`)
+      .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>\n${COVER_DISCARD}`);
+  };
+  mat.userData.uSelfR = uSelfR;
+  return mat;
 }
 
 // Bisel interior: embudo del mismo color pero oscuro, que se funde en negro.
@@ -299,23 +333,35 @@ function wallMaterial(color) {
   const tint = new THREE.Color(color);
   return new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { uColor: { value: tint }, uDepth: { value: 1 }, uBand: { value: 0.3 } },
+    uniforms: {
+      uColor: { value: tint },
+      uDepth: { value: 1 },
+      uBand: { value: 0.3 },
+      uSelfR: { value: START_R },
+      uHoleXZR: { value: holeXZR },
+    },
     vertexShader: `
       varying float vH;
       varying vec3 vN;
+      varying vec3 vCoverWorld;
       void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vCoverWorld = world.xyz;
         vH = position.y + 0.5;
         vN = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
     fragmentShader: `
       uniform vec3 uColor;
       uniform float uDepth;
       uniform float uBand;
+      ${COVER_DECL}
       varying float vH;
       varying vec3 vN;
+      varying vec3 vCoverWorld;
       void main() {
+        ${COVER_DISCARD}
         vec3 inward = normalize(-vN);
         float face = clamp(dot(inward, normalize(vec3(0.0, 0.35, 1.0))), 0.0, 1.0);
         float down = (1.0 - vH) * uDepth;
@@ -332,16 +378,26 @@ function wallMaterial(color) {
 function mouthMaterial() {
   return new THREE.ShaderMaterial({
     depthWrite: false,
+    uniforms: {
+      uSelfR: { value: START_R },
+      uHoleXZR: { value: holeXZR },
+    },
     vertexShader: `
       varying vec2 vLocal;
+      varying vec3 vCoverWorld;
       void main() {
         vLocal = position.xy;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vCoverWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
     fragmentShader: `
+      ${COVER_DECL}
       varying vec2 vLocal;
+      varying vec3 vCoverWorld;
       void main() {
+        ${COVER_DISCARD}
         float r = length(vLocal);
         float edge = smoothstep(0.86, 1.0, r);
         vec3 col = mix(vec3(0.0), vec3(0.006), edge);
@@ -353,9 +409,21 @@ function mouthMaterial() {
 
 export async function mountGame(canvas, hooks) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+  const dpr = window.devicePixelRatio || 1;
+  const res = {
+    ratio: Math.min(dpr, 1.5),
+    min: Math.min(dpr, 0.75),
+    max: Math.min(dpr, 2),
+    ceiling: Infinity,
+    refresh: 1 / 60,
+    calm: 0,
+    samples: [],
+  };
+  renderer.setPixelRatio(res.ratio);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = 1.08;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -412,16 +480,25 @@ export async function mountGame(canvas, hooks) {
   followSun(true);
 
   const particles = [];
-  const crumbGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
-  for (let i = 0; i < 28; i++) {
-    const mesh = new THREE.Mesh(
-      crumbGeo,
-      new THREE.MeshLambertMaterial({ color: 0xfff4d6, flatShading: true }),
-    );
-    mesh.visible = false;
-    scene.add(mesh);
-    particles.push({ mesh, alive: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 });
+  const CRUMBS = 72;
+  const crumbs = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshLambertMaterial({ flatShading: true }),
+    CRUMBS,
+  );
+  crumbs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  crumbs.frustumCulled = false;
+  crumbs.count = 0;
+  crumbs.visible = false;
+  const crumbPose = new THREE.Object3D();
+  const crumbTint = new THREE.Color();
+  const white = new THREE.Color(0xffffff);
+  for (let i = 0; i < CRUMBS; i++) {
+    crumbs.setColorAt(i, white);
+    particles.push({ alive: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, size: 0.2, spin: 0, color: new THREE.Color() });
   }
+  crumbs.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  scene.add(crumbs);
 
   function start(name, color) {
     for (const hole of holes) disposeHole(hole);
@@ -547,17 +624,15 @@ export async function mountGame(canvas, hooks) {
     const holeBox = holeOnScreen();
     const holeReach = Math.hypot(player.x - camera.position.x, player.z - camera.position.z);
     for (const obj of objects) {
-      if (!obj.batch) continue;
+      if (!obj.batch || (!obj.inView && obj.fade === 1)) continue;
       const blocks =
-        obj.state !== "gone" && player.radius < obj.eatR * 0.9 && coversHole(obj, holeBox, holeReach);
-      const target = blocks ? 0.28 : 1;
-      if (obj.fade == null) obj.fade = 1;
-      const next = THREE.MathUtils.damp(obj.fade, target, 10, dt);
-      if (Math.abs(next - obj.fade) < 0.01) continue;
+        obj.state === "idle" && player.radius < obj.eatR * 0.9 && coversHole(obj, holeBox, holeReach);
+      const target = blocks ? 0.3 : 1;
+      let next = THREE.MathUtils.damp(obj.fade, target, 10, dt);
+      if (Math.abs(next - target) < 0.01) next = target;
+      if (next === obj.fade) continue;
       obj.fade = next;
-      const attr = obj.batch.geometry.getAttribute("aFade");
-      attr.setX(obj.batchIndex, next);
-      attr.needsUpdate = true;
+      obj.batch.dirty = true;
     }
   }
 
@@ -666,54 +741,81 @@ export async function mountGame(canvas, hooks) {
     return best;
   }
 
-  function bestMouth(obj) {
-    const x = obj.state === "lip" ? obj.anchorX : obj.x;
-    const z = obj.state === "lip" ? obj.anchorZ : obj.z;
-    let best = null;
-    let bestDist = Infinity;
+  // Resultado de probeHoles: el hoyo que traga al objeto, o el que lo hace inclinarse.
+  let probeEater = null;
+  let probeForce = 0;
+  let probeDirX = 0;
+  let probeDirZ = 0;
+  let probeEdible = false;
+
+  function probeHoles(obj) {
+    probeEater = null;
+    probeForce = 0;
+    let eaterDist = Infinity;
     for (const hole of holes) {
-      if (!hole.alive || hole.radius < obj.eatR * 0.9) continue;
-      const dist = Math.hypot(x - hole.x, z - hole.z);
-      if (dist > hole.radius) continue;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = hole;
+      if (!hole.alive) continue;
+      const dx = hole.x - obj.x;
+      const dz = hole.z - obj.z;
+      const near = hole.radius + obj.eatR;
+      if (dx > near || dx < -near || dz > near || dz < -near) continue;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const edible = hole.radius >= obj.eatR * 0.9;
+      if (edible && dist <= hole.radius * MOUTH) {
+        if (dist < eaterDist) {
+          eaterDist = dist;
+          probeEater = hole;
+        }
+        continue;
       }
+      const reach = hole.radius + obj.solidR * 0.8;
+      if (dist >= reach) continue;
+      const size = edible ? 1 : hole.radius / (obj.eatR * 0.9);
+      if (size < 0.3) continue;
+      const force = (1 - dist / reach) * size;
+      if (force <= probeForce) continue;
+      probeForce = force;
+      probeDirX = dist > 1e-4 ? dx / dist : 1;
+      probeDirZ = dist > 1e-4 ? dz / dist : 0;
+      probeEdible = edible;
     }
-    return best;
   }
 
   function settleObjects(dt) {
     for (const obj of objects) {
-      if (obj.state === "gone" || obj.state === "falling") continue;
-      const hole = bestMouth(obj);
-      if (!hole) {
-        if (obj.state === "lip") relax(obj, dt);
-        continue;
-      }
-      obj.anchorX = obj.x;
-      obj.anchorZ = obj.z;
-      obj.pitX = obj.x;
-      obj.pitZ = obj.z;
-      obj.eater = hole;
-      obj.tilt = 0;
-      obj.tiltVel = 0;
-      releaseFall(obj, hole);
+      if (obj.state !== "idle") continue;
+      probeHoles(obj);
+      if (probeEater) releaseFall(obj, probeEater);
+      else leanObject(obj, dt);
     }
   }
 
-  function parkInstance(obj) {
-    if (!obj.batch) return;
-    _hide.position.set(0, -80, 0);
-    _hide.scale.set(0, 0, 0);
-    _hide.rotation.set(0, 0, 0);
-    _hide.updateMatrix();
-    obj.batch.setMatrixAt(obj.batchIndex, _hide.matrix);
-    dirtyBatches.add(obj.batch);
+  // Lo que el hoyo casi alcanza se vence hacia la boca; lo que todavía es grande tiembla.
+  function leanObject(obj, dt) {
+    let target = 0;
+    if (probeForce > 0) {
+      const tall = THREE.MathUtils.clamp(3.5 / Math.max(1, obj.height), 0.18, 1);
+      if (probeEdible) target = Math.min(0.42, probeForce * 0.55) * tall;
+      else target = probeForce * 0.14 * tall * (1 + Math.sin(timeU.value * 23 + obj.phase * 7) * 0.6);
+      obj.axisX = probeDirZ;
+      obj.axisZ = -probeDirX;
+    }
+    if (target === 0 && obj.wob === 0 && obj.wobVel === 0) return;
+    obj.wobVel += ((target - obj.wob) * 90 - obj.wobVel * 11) * dt;
+    obj.wob += obj.wobVel * dt;
+    if (target === 0 && Math.abs(obj.wob) < 0.002 && Math.abs(obj.wobVel) < 0.02) {
+      obj.wob = 0;
+      obj.wobVel = 0;
+      obj.mesh.rotation.set(0, obj.yaw, 0);
+      syncBatch(obj);
+      return;
+    }
+    obj.mesh.position.set(obj.x, 0, obj.z);
+    applyLean(obj, obj.wob);
+    syncBatch(obj, false);
   }
 
   function showFallingMesh(obj) {
-    parkInstance(obj);
+    syncBatch(obj);
     const geo = obj.mesh.geometry;
     if (!geo.getAttribute("aFade")) {
       const count = geo.getAttribute("position").count;
@@ -731,26 +833,30 @@ export async function mountGame(canvas, hooks) {
 
   function releaseFall(obj, hole) {
     obj.vy = obj.heavy ? -0.35 : -0.6;
+    const offX = obj.x - hole.x;
+    const offZ = obj.z - hole.z;
+    const len = Math.hypot(offX, offZ);
     obj.vx = 0;
     obj.vz = 0;
-    obj.fallX = obj.x - hole.x;
-    obj.fallZ = obj.z - hole.z;
+    obj.onWall = false;
     obj.fallT = 0;
-    // El objeto se vuelca hacia el centro del hoyo: eje perpendicular a esa dirección.
-    const len = Math.hypot(obj.fallX, obj.fallZ);
-    const dx = len > 1e-4 ? -obj.fallX / len : Math.cos(obj.yaw || 0);
-    const dz = len > 1e-4 ? -obj.fallZ / len : Math.sin(obj.yaw || 0);
+    // Se vuelca hacia el centro del hoyo: eje perpendicular a esa dirección.
+    const dx = len > 1e-4 ? -offX / len : Math.cos(obj.yaw || 0);
+    const dz = len > 1e-4 ? -offZ / len : Math.sin(obj.yaw || 0);
     obj.axisX = dz;
     obj.axisZ = -dx;
-    obj.tilt = 0;
-    obj.tiltVel = 0;
+    obj.tilt = obj.wob;
+    obj.tiltFrom = obj.wob;
+    obj.wob = 0;
+    obj.wobVel = 0;
     obj.spin = 0;
-    obj.spinDir = rand() > 0.5 ? 1 : -1;
+    obj.spinDir = Math.random() > 0.5 ? 1 : -1;
+    obj.credited = false;
     obj.state = "falling";
     obj.eater = hole;
     obj.mesh.scale.setScalar(1);
-    obj.mesh.rotation.set(0, obj.yaw || 0, 0);
     obj.mesh.position.set(obj.x, obj.y, obj.z);
+    applyLean(obj, obj.tilt);
     showFallingMesh(obj);
     if (hole.player) {
       sfx.swallow(obj.kind, obj.mass, hole.radius);
@@ -758,100 +864,106 @@ export async function mountGame(canvas, hooks) {
     }
   }
 
-  function relax(obj, dt) {
-    if (obj.pitX != null) {
-      obj.x = obj.pitX;
-      obj.z = obj.pitZ;
-      obj.pitX = null;
-      obj.pitZ = null;
-    }
-    obj.tiltVel += -obj.tilt * 10 * dt;
-    obj.tiltVel *= Math.max(0, 1 - dt * 2.5);
-    obj.tilt = Math.max(0, obj.tilt + obj.tiltVel * dt);
-    obj.x = THREE.MathUtils.damp(obj.x, obj.anchorX, 7, dt);
-    obj.z = THREE.MathUtils.damp(obj.z, obj.anchorZ, 7, dt);
-    obj.y = THREE.MathUtils.damp(obj.y, 0, 8, dt);
-    if (obj.tilt < 0.03) {
-      obj.state = "idle";
-      obj.tilt = 0;
-      obj.tiltVel = 0;
-      obj.y = 0;
-      obj.x = obj.anchorX;
-      obj.z = obj.anchorZ;
-      obj.mesh.position.set(obj.x, 0, obj.z);
-      obj.mesh.rotation.set(0, obj.yaw, 0);
-      syncBatch(obj);
-      return;
-    }
-    obj.mesh.position.set(obj.x, obj.y, obj.z);
-    applyLean(obj, obj.tilt);
-    syncBatch(obj);
-  }
-
   function stepIdle(obj, dt) {
-    if (obj.state !== "idle") return;
-    if (obj.motion) {
-      const { axis, speed } = obj.motion;
-      obj.motion.dir = obj.motion.dir || 1;
-      const delta = speed * obj.motion.dir * dt;
-      if (axis === "x") obj.x += delta;
-      else obj.z += delta;
-      const along = axis === "x" ? obj.x : obj.z;
-      if (along < obj.motion.min || along > obj.motion.max) obj.motion.dir *= -1;
-      if (!onIsland(obj.x, obj.z, 3)) {
-        obj.motion.dir *= -1;
-        const keep = ISLAND - 3.5;
-        const d = Math.hypot(obj.x, obj.z) || 1;
-        obj.x *= keep / d;
-        obj.z *= keep / d;
-      }
-      obj.yaw = Math.atan2(axis === "x" ? obj.motion.dir : 0, axis === "z" ? obj.motion.dir : 0);
+    if (obj.state !== "idle" || !obj.motion) return;
+    const m = obj.motion;
+    const alongX = m.axis === "x";
+    if (!m.ready) {
+      m.ready = true;
+      m.cross = alongX ? obj.z : obj.x;
+      m.road = Math.round(m.cross / BLOCK) * BLOCK;
+      m.lane = m.cross - m.road;
+      m.ramp = 1;
+      obj.yaw = Math.atan2(alongX ? m.dir : 0, alongX ? 0 : m.dir);
     }
-    obj.anchorX = obj.x;
-    obj.anchorZ = obj.z;
-    obj.y = 0;
-    obj.mesh.position.set(obj.x, obj.bob * 0.07, obj.z);
+    // Frena al llegar al final, pega la vuelta cambiando de carril y vuelve a acelerar.
+    const along = alongX ? obj.x : obj.z;
+    const toEnd = m.dir > 0 ? m.max - along : along - m.min;
+    m.ramp = Math.min(1, m.ramp + dt / 1.4);
+    const pace = Math.min(m.ramp, THREE.MathUtils.clamp(toEnd / 6, 0.18, 1));
+    const step = m.speed * m.dir * pace * dt;
+    if (alongX) obj.x += step;
+    else obj.z += step;
+    const offIsland = !onIsland(obj.x, obj.z, 3);
+    if (offIsland) {
+      if (alongX) obj.x -= step;
+      else obj.z -= step;
+    }
+    if (toEnd <= 0 || offIsland) {
+      m.dir *= -1;
+      m.lane = -m.lane;
+      m.ramp = 0.12;
+    }
+    m.cross = THREE.MathUtils.damp(m.cross, m.road + m.lane, 1.8, dt);
+    if (alongX) obj.z = m.cross;
+    else obj.x = m.cross;
+    obj.yaw = dampAngle(obj.yaw, Math.atan2(alongX ? m.dir : 0, alongX ? 0 : m.dir), 3.2, dt);
+    obj.mesh.position.set(obj.x, 0, obj.z);
     obj.mesh.rotation.set(0, obj.yaw, 0);
-    if (obj.motion) syncBatch(obj);
+    syncBatch(obj, false);
   }
 
   function stepFall(obj, dt) {
     if (obj.state !== "falling") return;
     const hole = obj.eater;
-    obj.fallT += dt;
     const tall = obj.height || 0.4;
+    obj.fallT += dt;
     // Objetos altos caen más rápido para que el tragado no dure segundos.
     obj.vy -= (obj.heavy ? 7 : 9) * (1 + tall * 0.06) * dt;
     obj.y += obj.vy * dt;
     if (hole && hole.alive) {
-      // Se desliza hacia el centro de la boca mientras cae, sin teletransporte.
-      const pull = 1 - Math.exp(-(obj.heavy ? 4.2 : 6.5) * dt);
-      obj.fallX -= obj.fallX * pull;
-      obj.fallZ -= obj.fallZ * pull;
-      const reach = Math.hypot(obj.fallX, obj.fallZ);
-      const keep = hole.radius * 0.72;
-      if (reach > keep) {
-        obj.fallX *= keep / reach;
-        obj.fallZ *= keep / reach;
+      obj.x += obj.vx * dt;
+      obj.z += obj.vz * dt;
+      const drag = Math.exp(-1.5 * dt);
+      obj.vx *= drag;
+      obj.vz *= drag;
+      // La pared del embudo se angosta con la profundidad: lo que la toca se desliza
+      // hacia adentro y, la primera vez que choca ya hundido, rebota hacia el otro lado.
+      const depth = 0.7 + hole.radius * 1.7;
+      const sunk = THREE.MathUtils.clamp(-obj.y, 0, depth);
+      const wall = hole.radius * (PIT_TOP - (PIT_TOP - PIT_BOTTOM) * (sunk / depth));
+      const allowed = Math.max(0, wall - (obj.eatR + obj.solidR) * 0.5);
+      const offX = obj.x - hole.x;
+      const offZ = obj.z - hole.z;
+      const reach = Math.hypot(offX, offZ);
+      if (reach > allowed && reach > 1e-4) {
+        const nx = offX / reach;
+        const nz = offZ / reach;
+        const out = obj.vx * nx + obj.vz * nz;
+        if (!obj.onWall && sunk > 0.05) {
+          const kick = Math.max(0.35 * Math.max(0, out), -obj.vy * 0.28);
+          obj.vx -= nx * (out + kick);
+          obj.vz -= nz * (out + kick);
+          obj.vy *= 0.85;
+          obj.spinDir = -obj.spinDir;
+          obj.onWall = true;
+        } else if (out > 0) {
+          obj.vx -= nx * out;
+          obj.vz -= nz * out;
+        }
+        const slope = ((PIT_TOP - PIT_BOTTOM) * hole.radius) / depth;
+        const slide = 2 + hole.radius * 0.35 + Math.hypot(hole.vx, hole.vz) - obj.vy * slope * 1.5;
+        const next = Math.max(allowed, reach - slide * dt);
+        obj.x = hole.x + nx * next;
+        obj.z = hole.z + nz * next;
+      } else {
+        obj.onWall = false;
       }
-      obj.x = hole.x + obj.fallX;
-      obj.z = hole.z + obj.fallZ;
     }
+    // Lo alto no puede volcarse más de lo que entra en la boca.
+    const room = hole ? Math.min(1, (hole.radius * 0.8) / Math.max(0.5, tall)) : 1;
     const sink = Math.max(0, -obj.y);
-    obj.tilt = Math.min(0.62, sink * (obj.heavy ? 0.22 : 0.45) + obj.fallT * 0.18);
+    const lean = sink * (obj.heavy ? 0.22 : 0.45) + obj.fallT * 0.18;
+    obj.tilt = Math.min(0.62, Math.asin(room), Math.max(obj.tiltFrom, lean));
     obj.spin += obj.spinDir * dt * (obj.heavy ? 0.35 : 0.9);
-    obj.mesh.scale.setScalar(1);
     obj.mesh.position.set(obj.x, obj.y, obj.z);
     applyLean(obj, obj.tilt);
     if (!hole) return;
-    const top = obj.y + (obj.height || 0.4);
-    const denom = camera.position.y - top;
-    const viewS = Math.abs(denom) > 0.001 ? camera.position.y / denom : 1;
-    const gx = camera.position.x + viewS * (obj.x - camera.position.x);
-    const gz = camera.position.z + viewS * (obj.z - camera.position.z);
-    const dropped = top < -0.12;
-    const pastRim = Math.hypot(gx - hole.x, gz - hole.z) > hole.radius * 0.87;
-    if ((dropped && pastRim) || obj.y < -18) consume(obj, hole);
+    if (!obj.credited && (obj.y + tall * 0.5 < 0 || obj.fallT > 0.45)) credit(obj, hole);
+    const top = obj.y + tall;
+    // Pasada esa profundidad el shader ya lo pintó de negro: ahí deja de dibujarse.
+    const fallBlack = 0.12 + hole.radius * 0.42;
+    if (top < -fallBlack || obj.y < -30) consume(obj, hole);
   }
 
   function applyLean(obj, angle) {
@@ -864,22 +976,25 @@ export async function mountGame(canvas, hooks) {
     obj.mesh.quaternion.copy(_qt).multiply(_qy).multiply(_qs);
   }
 
+  // La masa se suma apenas el objeto se hunde; el radio la sigue con el resorte de syncHole.
+  function credit(obj, hole) {
+    obj.credited = true;
+    if (!hole.alive) return;
+    hole.mass += obj.mass;
+    hole.score = Math.round(hole.mass);
+    hole.punch = Math.min(0.28, hole.punch + Math.min(0.16, obj.mass * 0.004));
+    const near = hole.player ? 1 : Math.max(0, 1 - Math.hypot(hole.x - camera.position.x, hole.z - camera.position.z) / 45);
+    shake = Math.min(0.45, shake + obj.mass * 0.003 * near);
+    if (hole.player) popText(`+${obj.mass}`, hole.x, 1.15, hole.z);
+    if (near > 0 || hole.player) burst(hole, obj.mass);
+  }
+
   function consume(obj, hole) {
+    if (!obj.credited) credit(obj, hole);
     obj.state = "gone";
     if (obj.mesh.parent) obj.mesh.parent.remove(obj.mesh);
     obj.mesh.visible = false;
     syncBatch(obj);
-    if (hole.alive) {
-      hole.mass += obj.mass;
-      hole.score = Math.round(hole.mass);
-      hole.radius = radiusFromMass(hole.mass);
-      hole.punch = Math.min(0.28, hole.punch + Math.min(0.16, obj.mass * 0.004));
-      shake = Math.min(0.45, shake + obj.mass * 0.003);
-      if (hole.player) {
-        popText(`+${obj.mass}`, hole.x, 1.15, hole.z);
-      }
-      burst(hole.x, hole.z, hole.color);
-    }
   }
 
   function eatHoles(dt) {
@@ -895,7 +1010,6 @@ export async function mountGame(canvas, hooks) {
         prey.respawn = 3.1;
         hunter.mass += prey.mass * 0.65 + 12;
         hunter.score = Math.round(hunter.mass);
-        hunter.radius = radiusFromMass(hunter.mass);
         hunter.punch = Math.min(0.34, hunter.punch + 0.12);
         if (prey.player) {
           toast = "¡Te tragaron!";
@@ -931,8 +1045,11 @@ export async function mountGame(canvas, hooks) {
   }
 
   function syncHole(hole, dt = 0) {
+    hole.rim.material.userData.uSelfR.value = hole.radius;
+    hole.pit.material.uniforms.uSelfR.value = hole.radius;
+    hole.cap.material.uniforms.uSelfR.value = hole.radius;
     if (!hole.alive) {
-      hole.sink += 0.016;
+      hole.sink += dt;
       hole.group.position.set(hole.x, -hole.sink * 2.2, hole.z);
       const s = Math.max(0.001, 1 - hole.sink);
       hole.group.scale.setScalar(s);
@@ -960,7 +1077,11 @@ export async function mountGame(canvas, hooks) {
     // Aro: radio mayor 0.94R con tubo 0.12R (borde exterior ~1.06R, interior ~0.82R),
     // achatado en vertical para que sea un labio redondeado y no un anillo alto.
     const rimLift = THREE.MathUtils.clamp(visual * 0.05, 0.035, 0.2);
-    hole.rim.scale.set(visual * 0.94, visual * 0.94, rimLift / 0.12);
+    // Cada bocado hace latir el aro: se ensancha, engorda y brilla un instante.
+    if (dt > 0) hole.punch = THREE.MathUtils.damp(hole.punch, 0, 7, dt);
+    const pulse = 1 + hole.punch * 0.4;
+    hole.rim.scale.set(visual * 0.94 * pulse, visual * 0.94 * pulse, (rimLift * (1 + hole.punch * 1.6)) / 0.12);
+    hole.rim.material.emissiveIntensity = 1 + hole.punch * 3.5;
     hole.rim.position.y = -rimLift * 0.2;
     hole.lip.visible = false;
     const depth = 0.7 + visual * 1.7;
@@ -986,15 +1107,18 @@ export async function mountGame(canvas, hooks) {
     const focus = player || { x: 0, z: 0, radius };
     const back = 9.2 + radius * 1.85;
     const height = 12.4 + radius * 2.15;
-    shake *= 0.92;
-    desired.set(focus.x + Math.sin(timeU.value * 30) * shake, height, focus.z + back);
+    shake *= Math.pow(0.92, dt * 60);
+    desired.set(
+      focus.x + Math.sin(timeU.value * 31) * shake,
+      height,
+      focus.z + back + Math.cos(timeU.value * 27) * shake * 0.6,
+    );
     if (snap) camera.position.copy(desired);
     else camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
     look.set(focus.x, 0, focus.z - (2.8 + radius * 0.42));
     camera.lookAt(look);
     camera.updateMatrixWorld();
     pitCam.value.copy(camera.position);
-    pitProjView.value.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     scene.fog.near = 70 + radius * 4.5;
     scene.fog.far = 190 + radius * 11;
   }
@@ -1076,38 +1200,60 @@ export async function mountGame(canvas, hooks) {
     );
   }
 
-  function burst(x, z) {
+  // Escombros que saltan desde el borde, del color del hoyo y del tamaño de lo tragado.
+  function burst(hole, mass) {
+    const count = Math.min(10, 3 + Math.round(Math.sqrt(mass)));
+    const size = 0.1 + Math.min(0.55, hole.radius * 0.07);
+    crumbTint.set(hole.color);
     let spawned = 0;
     for (const p of particles) {
       if (p.alive) continue;
+      const a = Math.random() * Math.PI * 2;
+      const rim = hole.radius * (0.75 + Math.random() * 0.3);
+      const out = 1.5 + Math.random() * 2 + hole.radius * 0.35;
       p.alive = true;
-      p.mesh.visible = true;
-      p.x = x + (Math.random() - 0.5) * 0.8;
-      p.z = z + (Math.random() - 0.5) * 0.8;
-      p.y = 0.3;
-      p.vx = (Math.random() - 0.5) * 3;
-      p.vz = (Math.random() - 0.5) * 3;
-      p.vy = 2 + Math.random() * 2;
-      p.life = 0.45;
+      p.x = hole.x + Math.cos(a) * rim;
+      p.z = hole.z + Math.sin(a) * rim;
+      p.y = 0.15;
+      p.vx = Math.cos(a) * out + hole.vx * 0.5;
+      p.vz = Math.sin(a) * out + hole.vz * 0.5;
+      p.vy = 3 + Math.random() * 2.5 + hole.radius * 0.3;
+      p.max = p.life = 0.5 + Math.random() * 0.25;
+      p.size = size * (0.6 + Math.random() * 0.8);
+      p.spin = Math.random() * Math.PI;
+      p.color.copy(crumbTint).lerp(white, Math.random() * 0.55);
       spawned += 1;
-      if (spawned === 6) break;
+      if (spawned === count) break;
     }
   }
 
   function updateParticles(dt) {
+    let n = 0;
     for (const p of particles) {
       if (!p.alive) continue;
       p.life -= dt;
-      p.vy -= 12 * dt;
+      p.vy -= 14 * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      p.mesh.position.set(p.x, p.y, p.z);
+      p.spin += dt * 9;
       if (p.life <= 0 || p.y < -1) {
         p.alive = false;
-        p.mesh.visible = false;
+        continue;
       }
+      crumbPose.position.set(p.x, p.y, p.z);
+      crumbPose.rotation.set(p.spin, p.spin * 0.7, 0);
+      crumbPose.scale.setScalar(p.size * Math.min(1, (p.life / p.max) * 2.2));
+      crumbPose.updateMatrix();
+      crumbs.setMatrixAt(n, crumbPose.matrix);
+      crumbs.setColorAt(n, p.color);
+      n += 1;
     }
+    if (n === 0 && crumbs.count === 0) return;
+    crumbs.count = n;
+    crumbs.visible = n > 0;
+    crumbs.instanceMatrix.needsUpdate = true;
+    crumbs.instanceColor.needsUpdate = true;
   }
 
   function createHole(name, color, isPlayer) {
@@ -1123,7 +1269,7 @@ export async function mountGame(canvas, hooks) {
       new THREE.MeshBasicMaterial({ color: 0x000000 }),
     );
     lip.visible = false;
-    const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.88, 0.5, 1, 64, 1, true), wallMaterial(color));
+    const pit = new THREE.Mesh(new THREE.CylinderGeometry(PIT_TOP, PIT_BOTTOM, 1, 64, 1, true), wallMaterial(color));
     pit.renderOrder = 2;
     const capMat = mouthMaterial();
     capMat.depthWrite = false;
@@ -1223,8 +1369,48 @@ export async function mountGame(canvas, hooks) {
     }
   }
 
+  function setRatio(ratio) {
+    res.ratio = ratio;
+    renderer.setPixelRatio(ratio);
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  }
+
+  // Resolución dinámica: baja si se pierden frames contra el refresco de la pantalla,
+  // y sube de a poco cuando sobra margen, sin pasar del último nivel que falló.
+  function tuneResolution(raw) {
+    if (raw > 0.25) {
+      res.samples.length = 0;
+      return;
+    }
+    res.samples.push(raw);
+    if (res.samples.length < 90) return;
+    res.samples.sort((a, b) => a - b);
+    const fast = res.samples[9];
+    const mid = res.samples[45];
+    res.samples.length = 0;
+    res.refresh = Math.min(fast, res.refresh * 1.01);
+    if (mid > res.refresh * 1.3) {
+      res.calm = 0;
+      if (res.ratio > res.min) {
+        res.ceiling = res.ratio - 0.125;
+        setRatio(Math.max(res.min, res.ratio - 0.25));
+      }
+    } else if (mid < res.refresh * 1.1) {
+      res.calm += 1;
+      const top = Math.min(res.max, res.ceiling);
+      if (res.calm >= 4 && res.ratio < top) {
+        res.calm = 0;
+        setRatio(Math.min(top, res.ratio + 0.125));
+      }
+    } else {
+      res.calm = 0;
+    }
+  }
+
   function frameWrapped() {
-    const dt = Math.min(0.033, clock.getDelta());
+    const raw = clock.getDelta();
+    const dt = Math.min(0.033, raw);
+    tuneResolution(raw);
     timeU.value += dt;
     if (phase === "menu") {
       camOrbit += dt * 0.07;
@@ -1236,7 +1422,7 @@ export async function mountGame(canvas, hooks) {
       if (timeLeft <= 0) finish();
       else simulate(dt);
     }
-    flushBatches();
+    flushBatches(camera, scene.fog.far);
     flushShadowCasters(renderer, shadowX, shadowZ, shadowSpan);
     renderer.render(scene, camera);
     if (phase === "play") {
@@ -1287,39 +1473,59 @@ const _qy = new THREE.Quaternion();
 const _qt = new THREE.Quaternion();
 const _qs = new THREE.Quaternion();
 
+function dampAngle(from, to, lambda, dt) {
+  const diff = mod(to - from + Math.PI, Math.PI * 2) - Math.PI;
+  return from + diff * (1 - Math.exp(-lambda * dt));
+}
+
 function resetObj(obj) {
   obj.x = obj.homeX;
   obj.y = 0;
   obj.z = obj.homeZ;
-  obj.vx = 0;
   obj.vy = 0;
-  obj.vz = 0;
   obj.tilt = 0;
-  obj.tiltVel = 0;
+  obj.tiltFrom = 0;
+  obj.wob = 0;
+  obj.wobVel = 0;
   obj.spin = 0;
-  obj.arm = 0;
   obj.axisX = 1;
   obj.axisZ = 0;
-  obj.anchorX = obj.homeX;
-  obj.anchorZ = obj.homeZ;
   obj.yaw = obj.homeYaw;
-  obj.bob = 0;
   obj.state = "idle";
   obj.eater = null;
+  obj.credited = false;
+  obj.fade = 1;
+  if (obj.mesh.parent) obj.mesh.parent.remove(obj.mesh);
   obj.mesh.visible = true;
-  obj.mesh.castShadow = obj.mass >= 8;
   obj.mesh.scale.setScalar(1);
   obj.mesh.position.set(obj.x, 0, obj.z);
   obj.mesh.rotation.set(0, obj.homeYaw, 0);
-  if (obj.motion) obj.motion.dir = obj.homeDir;
+  if (obj.motion) {
+    obj.motion.dir = obj.homeDir;
+    obj.motion.ready = false;
+  }
   syncBatch(obj);
 }
 
 const SHADOW_KINDS = new Set(["house", "building", "tower", "shop", "statue", "fountain", "kiosk", "shed"]);
-const dirtyBatches = new Set();
+const BLOB_SKIP = new Set(["pool"]);
+// Dirección en el piso hacia donde cae la sombra del sol (que está en +x, +z).
+const SHADOW_DIR_X = -48 / Math.hypot(48, 28);
+const SHADOW_DIR_Z = -28 / Math.hypot(48, 28);
+const CULL_PAD = 8;
+const batchList = [];
 const shadowGroups = [];
 let shadowDirty = false;
-const _hide = new THREE.Object3D();
+let blobs = null;
+let blobsDirty = false;
+let viewStale = true;
+let cullFog = Infinity;
+const _frustum = new THREE.Frustum();
+const _projScreen = new THREE.Matrix4();
+const _cullSphere = new THREE.Sphere();
+const _cullPos = new THREE.Vector3(Infinity, 0, 0);
+const _cullQuat = new THREE.Quaternion();
+let _cullAspect = 0;
 const shadowOnlyMat = new THREE.MeshLambertMaterial({
   vertexColors: true,
   flatShading: true,
@@ -1328,25 +1534,190 @@ const shadowOnlyMat = new THREE.MeshLambertMaterial({
   depthTest: false,
 });
 
-function syncBatch(obj) {
+function syncBatch(obj, shadows = true) {
   if (!obj.batch) return;
-  if (obj.state === "gone") {
-    _hide.position.set(0, -50, 0);
-    _hide.scale.set(0, 0, 0);
-    _hide.rotation.set(0, 0, 0);
-    _hide.updateMatrix();
-    obj.batch.setMatrixAt(obj.batchIndex, _hide.matrix);
-  } else {
-    obj.mesh.updateMatrix();
-    obj.batch.setMatrixAt(obj.batchIndex, obj.mesh.matrix);
-  }
-  dirtyBatches.add(obj.batch);
-  if (SHADOW_KINDS.has(obj.kind)) shadowDirty = true;
+  if (obj.state !== "gone") obj.mesh.updateMatrix();
+  obj.batch.dirty = true;
+  blobsDirty = true;
+  if (shadows && SHADOW_KINDS.has(obj.kind)) shadowDirty = true;
 }
 
-function flushBatches() {
-  for (const batch of dirtyBatches) batch.instanceMatrix.needsUpdate = true;
-  dirtyBatches.clear();
+function inView(obj, eye) {
+  const r = Math.max(obj.eatR, obj.height * 0.5) + CULL_PAD;
+  _cullSphere.center.set(obj.x, obj.height * 0.5, obj.z);
+  _cullSphere.radius = r;
+  if (!_frustum.intersectsSphere(_cullSphere)) return false;
+  return _cullSphere.center.distanceTo(eye) - r < cullFog;
+}
+
+// Cada lote se compacta con las instancias visibles: lo que queda fuera de cámara,
+// cayendo o tragado no se dibuja. Se recalcula al mover la cámara unos metros.
+function flushBatches(camera, fogFar) {
+  camera.updateMatrixWorld();
+  const moved =
+    viewStale ||
+    camera.position.distanceToSquared(_cullPos) > 6.25 ||
+    Math.abs(camera.quaternion.dot(_cullQuat)) < 0.9995 ||
+    camera.aspect !== _cullAspect;
+  if (moved) {
+    viewStale = false;
+    _cullPos.copy(camera.position);
+    _cullQuat.copy(camera.quaternion);
+    _cullAspect = camera.aspect;
+    cullFog = fogFar;
+    _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_projScreen);
+    for (const rec of batchList) {
+      for (const obj of rec.items) obj.inView = inView(obj, camera.position);
+      rec.dirty = true;
+    }
+    blobsDirty = true;
+  }
+  for (const rec of batchList) {
+    if (rec.dirty || rec.moving) packBatch(rec, camera.position);
+  }
+  if (blobsDirty) packBlobs();
+}
+
+function packBatch(rec, eye) {
+  rec.dirty = false;
+  const { mesh, items, fade } = rec;
+  let n = 0;
+  for (const obj of items) {
+    if (obj.state === "falling" || obj.state === "gone") continue;
+    if (obj.motion) obj.inView = inView(obj, eye);
+    if (!obj.inView) continue;
+    mesh.setMatrixAt(n, obj.mesh.matrix);
+    fade.array[n] = obj.fade;
+    n += 1;
+  }
+  mesh.count = n;
+  mesh.visible = n > 0;
+  if (n === 0) return;
+  mesh.instanceMatrix.clearUpdateRanges();
+  mesh.instanceMatrix.addUpdateRange(0, n * 16);
+  mesh.instanceMatrix.needsUpdate = true;
+  fade.clearUpdateRanges();
+  fade.addUpdateRange(0, n);
+  fade.needsUpdate = true;
+}
+
+function packBlobs() {
+  blobsDirty = false;
+  const { mesh, items, shade } = blobs;
+  const m = mesh.instanceMatrix.array;
+  let n = 0;
+  for (const obj of items) {
+    if (!obj.inView || obj.state === "falling" || obj.state === "gone") continue;
+    const reach = Math.min(obj.height * 0.22, 1.6);
+    const sx = obj.halfX * 2.9 + obj.blobPad;
+    const sz = obj.halfZ * 2.9 + obj.blobPad;
+    const c = Math.cos(obj.yaw);
+    const s = Math.sin(obj.yaw);
+    const o = n * 16;
+    m[o] = c * sx;
+    m[o + 1] = 0;
+    m[o + 2] = -s * sx;
+    m[o + 3] = 0;
+    m[o + 4] = 0;
+    m[o + 5] = 1;
+    m[o + 6] = 0;
+    m[o + 7] = 0;
+    m[o + 8] = s * sz;
+    m[o + 9] = 0;
+    m[o + 10] = c * sz;
+    m[o + 11] = 0;
+    m[o + 12] = obj.x + SHADOW_DIR_X * reach;
+    m[o + 13] = 0.05;
+    m[o + 14] = obj.z + SHADOW_DIR_Z * reach;
+    m[o + 15] = 1;
+    shade.array[n] = obj.blobShade;
+    n += 1;
+  }
+  mesh.count = n;
+  mesh.visible = n > 0;
+  if (n === 0) return;
+  mesh.instanceMatrix.clearUpdateRanges();
+  mesh.instanceMatrix.addUpdateRange(0, n * 16);
+  mesh.instanceMatrix.needsUpdate = true;
+  shade.clearUpdateRanges();
+  shade.addUpdateRange(0, n);
+  shade.needsUpdate = true;
+}
+
+// Sombra de contacto: mancha radial suave bajo cada prop, del lado opuesto al sol.
+function blobMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    fog: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uHoleXZR: { value: holeXZR } }]),
+    vertexShader: `
+      #include <common>
+      #include <fog_pars_vertex>
+      attribute float aShade;
+      varying vec2 vDisc;
+      varying float vShade;
+      varying vec3 vWorld;
+      void main() {
+        vDisc = uv * 2.0 - 1.0;
+        vShade = aShade;
+        vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        vec4 mvPosition = viewMatrix * world;
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: `
+      #include <common>
+      #include <fog_pars_fragment>
+      uniform vec3 uHoleXZR[10];
+      varying vec2 vDisc;
+      varying float vShade;
+      varying vec3 vWorld;
+      void main() {
+        for (int i = 0; i < 10; i++) {
+          float hr = uHoleXZR[i].z;
+          if (hr > 0.0 && distance(vWorld.xz, uHoleXZR[i].xy) < hr) discard;
+        }
+        float r = dot(vDisc, vDisc);
+        float a = (1.0 - smoothstep(0.12, 1.0, r)) * vShade;
+        #ifdef USE_FOG
+          a *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+        #endif
+        gl_FragColor = vec4(0.0, 0.0, 0.0, a);
+      }
+    `,
+  });
+}
+
+function buildBlobs(scene, objects) {
+  if (blobs) {
+    scene.remove(blobs.mesh);
+    blobs.mesh.dispose();
+  }
+  const items = objects.filter((obj) => !BLOB_SKIP.has(obj.kind));
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const shade = new THREE.InstancedBufferAttribute(new Float32Array(items.length), 1);
+  shade.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute("aShade", shade);
+  const mesh = new THREE.InstancedMesh(geo, blobMaterial(), items.length);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  mesh.count = 0;
+  scene.add(mesh);
+  for (const obj of items) {
+    const big = SHADOW_KINDS.has(obj.kind);
+    obj.blobShade = big ? 0.24 : 0.4;
+    obj.blobPad = big ? 1.4 : 0.3;
+  }
+  blobs = { mesh, items, shade };
+  blobsDirty = true;
 }
 
 function flushShadowCasters(renderer, x, z, span) {
@@ -1366,6 +1737,7 @@ function flushShadowCasters(renderer, x, z, span) {
       mesh.setMatrixAt(n, obj.mesh.matrix);
       n += 1;
     }
+    mesh.userData.count = n;
     mesh.count = n;
     mesh.visible = n > 0;
     mesh.castShadow = n > 0;
@@ -1380,6 +1752,11 @@ function buildBatches(scene, objects) {
     group.mesh.dispose();
   }
   shadowGroups.length = 0;
+  for (const rec of batchList) {
+    scene.remove(rec.mesh);
+    rec.mesh.dispose();
+  }
+  batchList.length = 0;
   const groups = new Map();
   for (const obj of objects) {
     const key = `${obj.mesh.geometry.uuid}:${obj.mesh.material.uuid}`;
@@ -1389,32 +1766,43 @@ function buildBatches(scene, objects) {
   }
   for (const list of groups.values()) {
     const batch = new THREE.InstancedMesh(list[0].mesh.geometry.clone(), list[0].mesh.material, list.length);
+    batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     batch.castShadow = false;
     batch.receiveShadow = false;
     batch.frustumCulled = false;
-    list.forEach((obj, index) => {
-      obj.batch = batch;
-      obj.batchIndex = index;
-      obj.mesh.updateMatrix();
-      batch.setMatrixAt(index, obj.mesh.matrix);
-    });
-    batch.instanceMatrix.needsUpdate = true;
+    batch.count = 0;
     const fade = new THREE.InstancedBufferAttribute(new Float32Array(list.length).fill(1), 1);
     fade.setUsage(THREE.DynamicDrawUsage);
     batch.geometry.setAttribute("aFade", fade);
+    const rec = { mesh: batch, items: list, fade, dirty: true, moving: list.some((obj) => obj.motion) };
+    for (const obj of list) {
+      obj.batch = rec;
+      obj.mesh.updateMatrix();
+    }
+    batchList.push(rec);
     scene.add(batch);
     if (!SHADOW_KINDS.has(list[0].kind)) continue;
+    // Solo proyecta sombra: en el pase principal queda con 0 instancias y no se dibuja.
     const mesh = new THREE.InstancedMesh(list[0].mesh.geometry, shadowOnlyMat, list.length);
     mesh.count = 0;
+    mesh.userData.count = 0;
     mesh.visible = false;
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.frustumCulled = false;
     mesh.matrixAutoUpdate = false;
+    mesh.onBeforeShadow = () => {
+      mesh.count = mesh.userData.count;
+    };
+    mesh.onAfterShadow = () => {
+      mesh.count = 0;
+    };
     scene.add(mesh);
     shadowGroups.push({ mesh, items: list });
   }
+  buildBlobs(scene, objects);
   shadowDirty = true;
+  viewStale = true;
 }
 
 function addObj(scene, objects, prop, x, z, yaw, motion = null) {
@@ -1426,23 +1814,22 @@ function addObj(scene, objects, prop, x, z, yaw, motion = null) {
     x,
     y: 0,
     z,
-    vx: 0,
     vy: 0,
-    vz: 0,
     tilt: 0,
-    tiltVel: 0,
-    tiltDir: 0,
+    tiltFrom: 0,
+    wob: 0,
+    wobVel: 0,
     spin: 0,
-    arm: 0,
+    spinDir: 1,
     axisX: 1,
     axisZ: 0,
-    anchorX: x,
-    anchorZ: z,
     yaw,
-    bob: 0,
     phase: Math.random() * 6,
     state: "idle",
     eater: null,
+    credited: false,
+    fade: 1,
+    inView: true,
     homeX: x,
     homeZ: z,
     homeYaw: yaw,
@@ -1492,6 +1879,7 @@ function seaMaterial() {
         float fade = smoothstep(uShore + 58.0, uOuter, r);
         col = mix(col, uSky, fade);
         gl_FragColor = vec4(col, 1.0);
+        #include <colorspace_fragment>
       }
     `,
   });
