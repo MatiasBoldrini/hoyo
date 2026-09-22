@@ -45,6 +45,10 @@
         </div>
       </div>
       <button id="play" type="button">JUGAR</button>
+      <button id="open-party" class="party-entry" type="button">
+        <span aria-hidden="true">🎉</span>
+        <span><b>MODO PARTY</b><small>Creá una sala e invitá a tus amigos</small></span>
+      </button>
       <button id="open-explore" class="explore-entry" type="button">
         <span class="explore-entry-icon" aria-hidden="true">◆</span>
         <span><b>EXPLORÁ Y PERSONALIZÁ</b><small>Recorré la ciudad 3D y elegí cualquier objeto</small></span>
@@ -53,6 +57,63 @@
     </section>
 
     <div id="colors" class="color-pop" hidden role="dialog" aria-label="Elegir color"></div>
+
+    <section id="party" class="party-panel" hidden aria-label="Modo party">
+      <div class="party-card">
+        <header class="party-header">
+          <button id="party-close" type="button" aria-label="Volver al menú">←</button>
+          <div><p>HOYO</p><h2>MODO PARTY</h2></div>
+          <span>EN VIVO</span>
+        </header>
+
+        <form id="party-setup">
+          <p class="party-lead">Armá una partida privada. El link de invitación dura una hora.</p>
+          <label class="party-setting">
+            <span><b>Duración</b><small>Tiempo de cada partida</small></span>
+            <select id="party-duration">
+              <option value="60">1 minuto</option>
+              <option value="120" selected>2 minutos</option>
+              <option value="180">3 minutos</option>
+              <option value="300">5 minutos</option>
+            </select>
+          </label>
+          <label class="party-setting">
+            <span><b>Bots</b><small>Además de los jugadores humanos</small></span>
+            <select id="party-bots">
+              <option value="0">Sin bots</option>
+              <option value="1">1 bot</option>
+              <option value="3" selected>3 bots</option>
+              <option value="5">5 bots</option>
+              <option value="7">7 bots</option>
+            </select>
+          </label>
+          <label class="party-setting">
+            <span><b>Objetos extra</b><small>Repone objetos durante la partida</small></span>
+            <select id="party-objects">
+              <option value="0">Normal</option>
+              <option value="1" selected>Abundante</option>
+              <option value="2">Caos</option>
+            </select>
+          </label>
+          <p id="party-error" class="party-error" hidden></p>
+          <button id="party-create" class="party-primary" type="submit">CREAR PARTY</button>
+        </form>
+
+        <div id="party-lobby" hidden>
+          <p class="party-kicker">Código de invitación</p>
+          <div class="party-code-row">
+            <strong id="party-code">--------</strong>
+            <button id="party-copy" type="button">COPIAR LINK</button>
+          </div>
+          <p id="party-expiry" class="party-expiry"></p>
+          <div id="party-summary" class="party-summary"></div>
+          <div class="party-players-head"><b>Jugadores</b><span id="party-count">0/8</span></div>
+          <ul id="party-people" class="party-people"></ul>
+          <p id="party-status" class="party-status" aria-live="polite">Esperando al anfitrión…</p>
+          <button id="party-start" class="party-primary" type="button" hidden>EMPEZAR PARTIDA</button>
+        </div>
+      </div>
+    </section>
 
     <section id="city-explore" class="city-explore" hidden aria-label="Explorá y personalizá la ciudad">
       <header class="explore-topbar">
