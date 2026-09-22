@@ -1,5 +1,3 @@
-import { connectSponsorStore, sponsorStoreEnabled } from "./sponsor-store.js";
-
 const CATEGORY_META = {
   parcel: { label: "Manzanas", icon: "▦", singular: "Manzana" },
   building: { label: "Edificios", icon: "▥", singular: "Edificio" },
@@ -527,19 +525,20 @@ export async function mountMarketplace(game) {
   renderBrandColors();
   updateOwnedCount();
 
-  if (sponsorStoreEnabled) {
-    try {
+  try {
+    const { connectSponsorStore, sponsorStoreEnabled } = await import("./sponsor-store.js");
+    if (sponsorStoreEnabled) {
       store = await connectSponsorStore();
       await syncPlaces();
       liveStatus.lastChild.textContent = " Conectado";
       store.subscribe(() => {
         syncPlaces().catch((error) => console.warn("No se pudo actualizar sponsors", error));
       });
-    } catch (error) {
-      console.warn("Supabase no disponible; usando persistencia local", error);
+    } else {
       liveStatus.lastChild.textContent = " Modo local";
     }
-  } else {
+  } catch (error) {
+    console.warn("Supabase no disponible; usando persistencia local", error);
     liveStatus.lastChild.textContent = " Modo local";
   }
 }

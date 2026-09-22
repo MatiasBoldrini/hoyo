@@ -266,11 +266,12 @@ gl_FragColor.rgb *= vWorldHole.y < 0.0 ? clamp(1.0 + vWorldHole.y / (0.12 + mout
 }
 
 function nameSprite(text, color) {
-  // El cartel se estira en pantalla: dibujarlo chico (256×64) lo dejaba pixelado.
-  const scale = 4;
+  // Dos píxeles de textura por píxel CSS alcanzan para texto nítido sin crear
+  // una textura de 1 MB por cada jugador y bot.
+  const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
   const c = document.createElement("canvas");
-  c.width = 256 * scale;
-  c.height = 64 * scale;
+  c.width = Math.round(256 * scale);
+  c.height = Math.round(64 * scale);
   const g = c.getContext("2d");
   g.scale(scale, scale);
   g.imageSmoothingQuality = "high";
@@ -289,16 +290,10 @@ function nameSprite(text, color) {
   g.fillText(text, 128, 33);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 4;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false });
-  // El include todavía no está expandido acá. Un mip más nítido evita letras borrosas.
-  mat.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <map_fragment>",
-      "vec4 sampledDiffuseColor = texture2D( map, vMapUv, -1.15 );\n\tdiffuseColor *= sampledDiffuseColor;",
-    );
-  };
-  mat.customProgramCacheKey = () => "name-sprite-sharp";
   const sprite = new THREE.Sprite(mat);
   sprite.center.set(0.5, 0);
   sprite.renderOrder = 10;
@@ -1354,7 +1349,7 @@ export async function mountGame(canvas, hooks) {
     hole.lip.material.opacity = rimOpacity;
     hole.label.position.y = 1.35 + visual * 0.22;
     const dist = camera.position.distanceTo(hole.group.position);
-    const labelW = Math.max(2.25, dist * 0.128);
+    const labelW = Math.max(2.1, dist * 0.11);
     hole.label.scale.set(labelW, labelW * 0.25, 1);
   }
 
