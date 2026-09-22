@@ -112,9 +112,11 @@ const game = await mountGame(canvas, {
 mountCityExplore(game);
 
 const hudState = { danger: "", time: "", rows: "", toast: null, map: null, dot: "" };
+const MAP_LAYER_SIZE = 768;
+const MAP_VIEW_RADIUS = 56;
 const mapLayer = document.createElement("canvas");
-mapLayer.width = minimap.width;
-mapLayer.height = minimap.height;
+mapLayer.width = MAP_LAYER_SIZE;
+mapLayer.height = MAP_LAYER_SIZE;
 const mapLayerCtx = mapLayer.getContext("2d");
 
 function paintHud(state) {
@@ -165,25 +167,34 @@ function drawMinimap(plan, me) {
   }
   const size = minimap.width;
   const center = size / 2;
-  const scale = (center - 3) / plan.span;
-  const dot = me ? `${Math.round(center + me.x * scale)}:${Math.round(center + me.z * scale)}:${me.color}` : "";
+  const reach = center - 3;
+  const layerScale = (mapLayer.width / 2 - 2) / plan.span;
+  const focusX = me ? me.x : 0;
+  const focusZ = me ? me.z : 0;
+  const srcR = MAP_VIEW_RADIUS * layerScale;
+  const sx = mapLayer.width / 2 + focusX * layerScale;
+  const sy = mapLayer.height / 2 + focusZ * layerScale;
+  const dot = `${Math.round(sx)}:${Math.round(sy)}:${me ? me.color : ""}`;
   if (dot === hudState.dot) return;
   hudState.dot = dot;
   mapCtx.clearRect(0, 0, size, size);
-  mapCtx.drawImage(mapLayer, 0, 0);
-  if (!me) return;
-  const [x, y] = dot.split(":");
+  mapCtx.fillStyle = "#1eb6e6";
+  mapCtx.fillRect(0, 0, size, size);
   mapCtx.save();
   mapCtx.beginPath();
-  mapCtx.arc(center, center, center - 3, 0, Math.PI * 2);
+  mapCtx.arc(center, center, reach, 0, Math.PI * 2);
   mapCtx.clip();
-  mapCtx.beginPath();
-  mapCtx.arc(Number(x), Number(y), 6, 0, Math.PI * 2);
-  mapCtx.fillStyle = me.color;
-  mapCtx.fill();
-  mapCtx.lineWidth = 2;
-  mapCtx.strokeStyle = "#ffffff";
-  mapCtx.stroke();
+  mapCtx.imageSmoothingEnabled = true;
+  mapCtx.drawImage(mapLayer, sx - srcR, sy - srcR, srcR * 2, srcR * 2, 0, 0, size, size);
+  if (me) {
+    mapCtx.beginPath();
+    mapCtx.arc(center, center, 6, 0, Math.PI * 2);
+    mapCtx.fillStyle = me.color;
+    mapCtx.fill();
+    mapCtx.lineWidth = 2;
+    mapCtx.strokeStyle = "#ffffff";
+    mapCtx.stroke();
+  }
   mapCtx.restore();
 }
 
@@ -208,23 +219,18 @@ function drawMapLayer(ctx, plan) {
     ctx.fill();
   }
   const island = plan.patches.find((patch) => patch.clip);
-  const walk = plan.patches.find((patch) => patch.t === "ring" && patch.color === "#e6ebf0");
   ctx.save();
   if (island) {
     ctx.beginPath();
     ctx.arc(center, center, island.r * scale, 0, Math.PI * 2);
     ctx.clip();
   }
-  if (walk) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(center, center, walk.inner * scale, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.fillStyle = "#8b939c";
-    ctx.fillRect(0, 0, size, size);
+  for (const patch of plan.patches) {
+    if (patch.t !== "rect") continue;
+    paintRect(ctx, patch, project, scale);
   }
   for (const block of plan.blocks || []) paintBlock(ctx, block, project, scale);
-  if (walk) ctx.restore();
+  ctx.restore();
   for (const patch of plan.patches) {
     if (patch.t !== "ring") continue;
     ctx.fillStyle = patch.color;
@@ -239,6 +245,14 @@ function drawMapLayer(ctx, plan) {
 
 const HOME_TONES = ["#8ed44a", "#74c447", "#9ad85a", "#62b84c"];
 const COAST_TONES = ["#c6dc72", "#d7e68c"];
+
+function paintRect(ctx, patch, project, scale) {
+  const [x, y] = project(patch.x, patch.z);
+  const w = patch.w * scale;
+  const h = patch.h * scale;
+  ctx.fillStyle = patch.color;
+  ctx.fillRect(x - w / 2, y - h / 2, w, h);
+}
 
 function paintBlock(ctx, block, project, scale) {
   const [x, y] = project(block.x, block.z);
