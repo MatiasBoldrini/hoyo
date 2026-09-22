@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
 import { loadProps, makeProp, propMaterials } from "./props.js";
 import { createSfx } from "./audio.js";
 
@@ -300,8 +301,11 @@ function nameSprite(text, color) {
   return sprite;
 }
 
-const MARKET_BUILDINGS = new Set(["house", "shop", "building", "tower"]);
-const MARKET_VEHICLES = new Set(["car", "van", "bus"]);
+// Solo se ofrecen soportes donde una marca puede integrarse de forma creíble.
+// El resto de los props sigue existiendo en la ciudad, pero no entra al inventario comercial.
+const MARKET_BUILDINGS = new Set(["shop", "building", "tower"]);
+const MARKET_LANDMARKS = new Set(["kiosk", "fountain"]);
+const MARKET_KINDS = new Set([...MARKET_BUILDINGS, ...MARKET_LANDMARKS]);
 
 function marketZone(x, z) {
   const dist = Math.hypot(x, z);
@@ -313,141 +317,107 @@ function marketZone(x, z) {
 
 function marketPrice(category, x, z, kind = "") {
   const centrality = Math.max(0, 1 - Math.hypot(x, z) / ISLAND);
-  const base = { parcel: 420, building: 310, vehicle: 95, place: 160 }[category];
+  const base = { building: 310, place: 160 }[category];
   const premium = kind === "tower" ? 260 : kind === "building" ? 140 : 0;
   return Math.round((base + centrality * base * 1.35 + premium) / 10) * 10;
 }
 
-function assetName(category, kind, index) {
+function assetName(kind, index) {
   const serial = String(index + 1).padStart(2, "0");
   const names = {
-    tree: "Árbol",
-    bush: "Arbusto",
-    fence: "Cerco",
-    flower: "Jardinera",
-    house: "Casa de barrio",
     shop: "Local comercial",
     building: "Edificio urbano",
     tower: "Torre central",
-    car: "Auto urbano",
-    van: "Van de reparto",
-    bus: "Vehículo especial",
-    cone: "Cono de tránsito",
-    bench: "Banco urbano",
-    bin: "Contenedor",
-    lamp: "Luminaria",
     kiosk: "Kiosco de plaza",
     fountain: "Fuente pública",
-    statue: "Monumento",
-    playset: "Área de juegos",
-    busstop: "Parada urbana",
-    pool: "Club de piscina",
-    hydrant: "Hidrante",
-    mailbox: "Buzón",
-    hedge: "Cerco verde",
-    picnic: "Mesa de picnic",
-    swing: "Hamaca",
-    shed: "Galpón",
   };
-  return `${names[kind] || (category === "place" ? "Espacio urbano" : "Activo")} ${serial}`;
+  return `${names[kind]} ${serial}`;
 }
 
-function buildMarketInventory(objects, mapPlan) {
+function buildMarketInventory(objects) {
   const items = [];
-  for (let index = 0; index < mapPlan.blocks.length; index++) {
-    const block = mapPlan.blocks[index];
-    const zone = marketZone(block.x, block.z);
-    items.push({
-      id: `parcel-${Math.round(block.x)}-${Math.round(block.z)}`,
-      shortId: `MZ-${String(index + 1).padStart(2, "0")}`,
-      category: "parcel",
-      name: `Manzana ${zone} ${String(index + 1).padStart(2, "0")}`,
-      description: "Una ubicación completa para convertirla en la sede visible de tu marca.",
-      zone,
-      reach: block.kind === "down" ? "Muy alta" : block.kind === "plaza" ? "Alta" : "Media",
-      price: marketPrice("parcel", block.x, block.z, block.kind),
-      x: block.x,
-      z: block.z,
-      height: block.kind === "down" ? 16 : 9,
-      target: block,
-    });
-  }
-  const counts = { building: 0, vehicle: 0, place: 0 };
+  const counts = { building: 0, place: 0 };
   objects.forEach((object, objectIndex) => {
-    let category = "place";
-    if (MARKET_BUILDINGS.has(object.kind)) category = "building";
-    else if (MARKET_VEHICLES.has(object.kind)) category = "vehicle";
+    if (!MARKET_KINDS.has(object.kind)) return;
+    const category = MARKET_BUILDINGS.has(object.kind) ? "building" : "place";
     const index = counts[category]++;
     const zone = marketZone(object.x, object.z);
+    const medallion = object.kind === "fountain";
     items.push({
       id: `asset-${objectIndex}`,
-      shortId: `${category === "building" ? "ED" : category === "vehicle" ? "VH" : "EP"}-${String(index + 1).padStart(3, "0")}`,
+      shortId: `${category === "building" ? "ED" : "EP"}-${String(index + 1).padStart(3, "0")}`,
       category,
-      name: assetName(category, object.kind, index),
+      kind: object.kind,
+      name: assetName(object.kind, index),
       description:
         category === "building"
           ? "Tu identidad en la fachada de uno de los edificios que protagonizan la ciudad."
-          : category === "vehicle"
-            ? "Una presencia móvil y llamativa que recorre el mapa durante cada partida."
-            : "Un punto de encuentro reconocible para que tu marca forme parte del recorrido.",
+          : medallion
+            ? "Una insignia integrada al frente de una fuente en un punto de encuentro de la ciudad."
+            : "Una aplicación de marca integrada al frente de un kiosco urbano.",
       zone,
       reach: Math.hypot(object.x, object.z) < 72 ? "Alta" : "Media",
       price: marketPrice(category, object.x, object.z, object.kind),
       x: object.x,
       z: object.z,
       height: object.height,
+      placement: medallion ? "medallion" : "facade",
       target: object,
     });
   });
   return items;
 }
 
-function brandSprite(record) {
+function drawContainedImage(ctx, image, x, y, width, height) {
+  const scale = Math.min(width / image.width, height / image.height);
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  ctx.drawImage(
+    image,
+    x + (width - drawWidth) / 2,
+    y + (height - drawHeight) / 2,
+    drawWidth,
+    drawHeight,
+  );
+}
+
+function brandSurface(record, item) {
+  const designWidth = 512;
+  const designHeight = 256;
+  const textureScale = 2;
+  const design = {
+    x: THREE.MathUtils.clamp(Number(record.design?.x ?? 0.5), 0.05, 0.95),
+    y: THREE.MathUtils.clamp(Number(record.design?.y ?? 0.5), 0.05, 0.95),
+    scale: THREE.MathUtils.clamp(Number(record.design?.scale ?? 0.46), 0.18, 0.82),
+    rotation: THREE.MathUtils.clamp(Number(record.design?.rotation ?? 0), -45, 45),
+  };
   const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 160;
+  canvas.width = designWidth * textureScale;
+  canvas.height = designHeight * textureScale;
   const ctx = canvas.getContext("2d");
+  ctx.scale(textureScale, textureScale);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
+  texture.anisotropy = 16;
 
   const paint = (image = null) => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.shadowColor = "rgba(15, 23, 42, .3)";
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 8;
-    ctx.fillStyle = "#ffffff";
-    roundRect(ctx, 18, 16, 476, 118, 28);
-    ctx.fill();
-    ctx.shadowColor = "transparent";
-    ctx.fillStyle = record.color || "#2257e6";
-    roundRect(ctx, 30, 28, 92, 92, 22);
-    ctx.fill();
+    ctx.clearRect(0, 0, designWidth, designHeight);
+    const color = record.color || "#2257e6";
     if (image) {
-      ctx.save();
-      roundRect(ctx, 36, 34, 80, 80, 17);
-      ctx.clip();
-      const scale = Math.max(80 / image.width, 80 / image.height);
-      const width = image.width * scale;
-      const height = image.height * scale;
-      ctx.drawImage(image, 76 - width / 2, 74 - height / 2, width, height);
-      ctx.restore();
+      drawContainedImage(ctx, image, 18, 18, designWidth - 36, designHeight - 36);
     } else {
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "900 34px Avenir Next, sans-serif";
+      const label = record.company || "Tu empresa";
+      const fontSize = Math.max(42, designWidth / Math.max(5.5, label.length * 0.58));
+      ctx.font = `900 ${fontSize}px Avenir Next, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(record.company.slice(0, 2).toUpperCase(), 76, 75);
+      ctx.lineJoin = "round";
+      ctx.lineWidth = Math.max(10, fontSize * 0.14);
+      ctx.strokeStyle = "rgba(255,255,255,.94)";
+      ctx.strokeText(label, designWidth / 2, designHeight / 2, designWidth - 28);
+      ctx.fillStyle = color;
+      ctx.fillText(label, designWidth / 2, designHeight / 2, designWidth - 28);
     }
-    ctx.fillStyle = "#141820";
-    ctx.font = "900 34px Avenir Next, sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    const label = record.company.length > 22 ? `${record.company.slice(0, 21)}…` : record.company;
-    ctx.fillText(label, 142, 66);
-    ctx.fillStyle = "#667085";
-    ctx.font = "700 20px Avenir Next, sans-serif";
-    ctx.fillText("ESPACIO OFICIAL", 142, 99);
     texture.needsUpdate = true;
   };
   paint();
@@ -457,21 +427,52 @@ function brandSprite(record) {
     image.onload = () => paint(image);
     image.src = record.logo;
   }
-  const material = new THREE.SpriteMaterial({
+  const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
-    depthTest: false,
+    alphaTest: 0.015,
+    depthTest: true,
+    depthWrite: false,
     toneMapped: false,
   });
-  const sprite = new THREE.Sprite(material);
-  sprite.scale.set(11.5, 3.6, 1);
-  sprite.renderOrder = 12;
-  return sprite;
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const surface = new THREE.Group();
+  const target = item.target;
+  const addPanel = (faceWidth, faceDepth, yaw) => {
+    const width = faceWidth * design.scale;
+    const height = width * (designHeight / designWidth);
+    const horizontal = (design.x - 0.5) * Math.max(0, faceWidth - width);
+    const y = height / 2 + (1 - design.y) * Math.max(0, target.height - height);
+    const normalX = Math.sin(yaw);
+    const normalZ = Math.cos(yaw);
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const panel = new THREE.Mesh(geometry, material);
+    panel.position.set(
+      normalX * (faceDepth + 0.08) + rightX * horizontal,
+      y,
+      normalZ * (faceDepth + 0.08) + rightZ * horizontal,
+    );
+    panel.rotation.y = yaw;
+    panel.rotation.z = THREE.MathUtils.degToRad(-design.rotation);
+    panel.scale.set(width, height, 1);
+    panel.renderOrder = 8;
+    surface.add(panel);
+  };
+  addPanel(target.halfX * 2, target.halfZ, 0);
+  addPanel(target.halfX * 2, target.halfZ, Math.PI);
+  addPanel(target.halfZ * 2, target.halfX, Math.PI / 2);
+  addPanel(target.halfZ * 2, target.halfX, -Math.PI / 2);
+  surface.userData.surfaceGeometry = geometry;
+  surface.userData.surfaceMaterial = material;
+  surface.userData.baseScale = new THREE.Vector3(1, 1, 1);
+  return surface;
 }
 
-function disposeBrandSprite(sprite) {
-  sprite.material.map?.dispose();
-  sprite.material.dispose();
+function disposeBrandSurface(surface) {
+  surface.userData.surfaceGeometry.dispose();
+  surface.userData.surfaceMaterial.map?.dispose();
+  surface.userData.surfaceMaterial.dispose();
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -681,19 +682,45 @@ export async function mountGame(canvas, hooks) {
   const explorePosition = new THREE.Vector3(0, 20, 112);
   const exploreVelocity = new THREE.Vector3();
   const exploreWish = new THREE.Vector3();
+  const exploreReturnPosition = new THREE.Vector3();
+  const exploreFocusCenter = new THREE.Vector3();
+  const exploreFocusDirection = new THREE.Vector3();
+  const exploreFocusGoal = new THREE.Vector3();
+  const exploreFocusLook = new THREE.Vector3();
+  const exploreFocusRight = new THREE.Vector3();
+  const exploreFocusToward = new THREE.Vector3();
   const exploreKeys = new Set();
   let exploreYaw = 0;
   let explorePitch = -0.2;
+  let exploreReturnYaw = 0;
+  let exploreReturnPitch = -0.2;
+  let exploreFocused = null;
+  let exploreReturning = false;
+  let exploreHasReturnPose = false;
+  let exploreFocusDistance = 8;
   let exploreSelected = null;
   let exploreHovered = null;
+  let hoverVisualItem = null;
+  let hoverExitItem = null;
+  let hoverStrength = 0;
+  let hoverExitStrength = 0;
 
   await loadProps();
   for (const material of propMaterials()) enablePitClip(material);
   const mapPlan = buildCity(scene, objects, rand);
-  const marketItems = buildMarketInventory(objects, mapPlan);
+  const marketItems = buildMarketInventory(objects);
   const marketByTarget = new Map(marketItems.map((item) => [item.target, item]));
   const brandMarkers = new Map();
+  const outlineHulls = new WeakMap();
   const outlineGeometry = new THREE.BufferGeometry();
+  const outlineMaskMaterial = new THREE.MeshBasicMaterial({
+    colorWrite: false,
+    depthWrite: true,
+    side: THREE.FrontSide,
+  });
+  const selectedOutlineMask = new THREE.Mesh(outlineGeometry, outlineMaskMaterial);
+  const hoverOutlineMask = new THREE.Mesh(outlineGeometry, outlineMaskMaterial);
+  const hoverExitOutlineMask = new THREE.Mesh(outlineGeometry, outlineMaskMaterial);
   const selectedOutline = new THREE.Mesh(
     outlineGeometry,
     new THREE.MeshBasicMaterial({
@@ -716,12 +743,55 @@ export async function mountGame(canvas, hooks) {
       toneMapped: false,
     }),
   );
+  const hoverExitOutline = new THREE.Mesh(
+    outlineGeometry,
+    new THREE.MeshBasicMaterial({
+      color: 0x5ee7ff,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
   selectedOutline.renderOrder = 13;
   hoverOutline.renderOrder = 12;
+  hoverExitOutline.renderOrder = 12;
+  selectedOutlineMask.renderOrder = 10;
+  hoverOutlineMask.renderOrder = 10;
+  hoverExitOutlineMask.renderOrder = 10;
   selectedOutline.visible = false;
   hoverOutline.visible = false;
-  scene.add(selectedOutline, hoverOutline);
+  hoverExitOutline.visible = false;
+  selectedOutlineMask.visible = false;
+  hoverOutlineMask.visible = false;
+  hoverExitOutlineMask.visible = false;
+  scene.add(
+    selectedOutlineMask,
+    hoverOutlineMask,
+    hoverExitOutlineMask,
+    selectedOutline,
+    hoverOutline,
+    hoverExitOutline,
+  );
   followSun(true);
+
+  function resetExploreOutlines() {
+    hoverVisualItem = null;
+    hoverExitItem = null;
+    hoverStrength = 0;
+    hoverExitStrength = 0;
+    for (const outline of [
+      selectedOutline,
+      hoverOutline,
+      hoverExitOutline,
+      selectedOutlineMask,
+      hoverOutlineMask,
+      hoverExitOutlineMask,
+    ]) {
+      outline.visible = false;
+    }
+  }
 
   function setBranding(record) {
     const item = marketItems.find((candidate) => candidate.id === record.itemId);
@@ -729,14 +799,18 @@ export async function mountGame(canvas, hooks) {
     const previous = brandMarkers.get(item.id);
     if (previous) {
       scene.remove(previous);
-      disposeBrandSprite(previous);
+      disposeBrandSurface(previous);
     }
-    const marker = brandSprite(record);
+    const marker = brandSurface(record, item);
     marker.userData.marketItem = item;
     marker.userData.url = record.url;
     marker.userData.company = record.company;
     marker.userData.animation = record.animation || "float";
     marker.userData.baseScale = marker.scale.clone();
+    marker.traverse((child) => {
+      child.userData.marketItem = item;
+      child.userData.url = record.url;
+    });
     brandMarkers.set(item.id, marker);
     scene.add(marker);
   }
@@ -744,7 +818,7 @@ export async function mountGame(canvas, hooks) {
   function setBrandings(records) {
     for (const marker of brandMarkers.values()) {
       scene.remove(marker);
-      disposeBrandSprite(marker);
+      disposeBrandSurface(marker);
     }
     brandMarkers.clear();
     for (const record of records) setBranding(record);
@@ -757,11 +831,12 @@ export async function mountGame(canvas, hooks) {
       const target = item.target;
       const animation = marker.userData.animation;
       const wave = Math.sin(timeU.value * 2.2 + target.x * 0.08 + target.z * 0.05);
-      const lift = animation === "float" ? wave * 0.22 : 0;
-      const pulse = animation === "pulse" ? 1 + wave * 0.045 : 1;
-      marker.position.set(target.x, (target.y || 0) + Math.max(3.6, item.height + 1.8) + lift, target.z);
+      const pulse = animation === "pulse" ? 1 + wave * 0.018 : 1;
+      const yaw = target.yaw || 0;
+      marker.position.set(target.x, target.y || 0, target.z);
+      marker.rotation.set(0, yaw, 0);
       marker.scale.copy(marker.userData.baseScale).multiplyScalar(pulse);
-      marker.material.opacity = animation === "pulse" ? 0.9 + wave * 0.1 : 1;
+      marker.userData.surfaceMaterial.opacity = animation === "float" ? 0.94 + wave * 0.06 : 1;
       marker.visible = !target.state || target.state === "idle";
     }
   }
@@ -831,10 +906,12 @@ export async function mountGame(canvas, hooks) {
     exploreYaw = 0;
     explorePitch = -0.2;
     exploreKeys.clear();
+    exploreFocused = null;
+    exploreReturning = false;
+    exploreHasReturnPose = false;
     exploreSelected = null;
     exploreHovered = null;
-    selectedOutline.visible = false;
-    hoverOutline.visible = false;
+    resetExploreOutlines();
     phase = "explore";
     viewStale = true;
     followSun(true);
@@ -844,22 +921,127 @@ export async function mountGame(canvas, hooks) {
     if (phase !== "explore") return;
     phase = "menu";
     exploreKeys.clear();
+    exploreFocused = null;
+    exploreReturning = false;
+    exploreHasReturnPose = false;
     exploreSelected = null;
     exploreHovered = null;
-    selectedOutline.visible = false;
-    hoverOutline.visible = false;
+    resetExploreOutlines();
+  }
+
+  function focusExploreItem(item) {
+    const target = item?.target;
+    if (!target?.mesh) return;
+    if (!exploreHasReturnPose) {
+      exploreReturnPosition.copy(explorePosition);
+      exploreReturnYaw = exploreYaw;
+      exploreReturnPitch = explorePitch;
+      exploreHasReturnPose = true;
+    }
+    exploreFocusCenter.set(target.x, Math.max(0.8, target.height * 0.52), target.z);
+    exploreFocusDirection.copy(explorePosition).sub(exploreFocusCenter);
+    const horizontal = Math.hypot(exploreFocusDirection.x, exploreFocusDirection.z);
+    if (horizontal < 0.001) {
+      exploreFocusDirection.set(Math.sin(exploreYaw), 0.3, Math.cos(exploreYaw));
+    } else {
+      const y = THREE.MathUtils.clamp(exploreFocusDirection.y / horizontal, 0.18, 0.72);
+      exploreFocusDirection.set(
+        exploreFocusDirection.x / horizontal,
+        y,
+        exploreFocusDirection.z / horizontal,
+      );
+    }
+    exploreFocusDirection.normalize();
+    exploreFocusDistance = THREE.MathUtils.clamp(
+      Math.max(target.eatR * 2.8, target.height * 1.35),
+      5,
+      25,
+    );
+    exploreFocused = item;
+    exploreReturning = false;
+    exploreVelocity.set(0, 0, 0);
+    exploreKeys.clear();
+  }
+
+  function restoreExploreView() {
+    if (!exploreHasReturnPose) return;
+    exploreFocused = null;
+    exploreReturning = true;
+    exploreVelocity.set(0, 0, 0);
+    exploreKeys.clear();
+  }
+
+  function dampExploreAngle(current, target, lambda, dt) {
+    const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+    return current + delta * (1 - Math.exp(-lambda * dt));
+  }
+
+  function dampExploreCamera(goal, yaw, pitch, dt) {
+    const lambda = 5.2;
+    explorePosition.x = THREE.MathUtils.damp(explorePosition.x, goal.x, lambda, dt);
+    explorePosition.y = THREE.MathUtils.damp(explorePosition.y, goal.y, lambda, dt);
+    explorePosition.z = THREE.MathUtils.damp(explorePosition.z, goal.z, lambda, dt);
+    exploreYaw = dampExploreAngle(exploreYaw, yaw, lambda, dt);
+    explorePitch = THREE.MathUtils.damp(explorePitch, pitch, lambda, dt);
+  }
+
+  function updateExploreFocus(dt) {
+    if (exploreFocused) {
+      const target = exploreFocused.target;
+      exploreFocusCenter.set(target.x, Math.max(0.8, target.height * 0.52), target.z);
+      exploreFocusGoal
+        .copy(exploreFocusDirection)
+        .multiplyScalar(exploreFocusDistance)
+        .add(exploreFocusCenter);
+      exploreFocusGoal.y = Math.max(1.8, exploreFocusGoal.y);
+
+      exploreFocusLook.copy(exploreFocusCenter);
+      exploreFocusToward.copy(exploreFocusCenter).sub(exploreFocusGoal).normalize();
+      if (window.innerWidth <= 620) {
+        exploreFocusLook.y -= exploreFocusDistance * 0.16;
+      } else {
+        exploreFocusRight.crossVectors(exploreFocusToward, camera.up).normalize();
+        exploreFocusLook.addScaledVector(exploreFocusRight, exploreFocusDistance * 0.09);
+      }
+      exploreFocusToward.copy(exploreFocusLook).sub(exploreFocusGoal).normalize();
+      const yaw = Math.atan2(-exploreFocusToward.x, -exploreFocusToward.z);
+      const pitch = Math.asin(THREE.MathUtils.clamp(exploreFocusToward.y, -1, 1));
+      dampExploreCamera(exploreFocusGoal, yaw, pitch, dt);
+      return;
+    }
+    if (!exploreReturning) return;
+    dampExploreCamera(exploreReturnPosition, exploreReturnYaw, exploreReturnPitch, dt);
+    const yawDelta = Math.atan2(
+      Math.sin(exploreReturnYaw - exploreYaw),
+      Math.cos(exploreReturnYaw - exploreYaw),
+    );
+    if (
+      explorePosition.distanceToSquared(exploreReturnPosition) < 0.0025 &&
+      Math.abs(yawDelta) < 0.002 &&
+      Math.abs(exploreReturnPitch - explorePitch) < 0.002
+    ) {
+      explorePosition.copy(exploreReturnPosition);
+      exploreYaw = exploreReturnYaw;
+      explorePitch = exploreReturnPitch;
+      exploreReturning = false;
+      exploreHasReturnPose = false;
+    }
   }
 
   function updateExplore(dt) {
     let forward = 0;
     let side = 0;
-    if (exploreKeys.has("KeyW")) forward += 1;
-    if (exploreKeys.has("KeyS")) forward -= 1;
-    if (exploreKeys.has("KeyD")) side += 1;
-    if (exploreKeys.has("KeyA")) side -= 1;
+    if (!exploreFocused && !exploreReturning) {
+      if (exploreKeys.has("KeyW")) forward += 1;
+      if (exploreKeys.has("KeyS")) forward -= 1;
+      if (exploreKeys.has("KeyD")) side += 1;
+      if (exploreKeys.has("KeyA")) side -= 1;
+    }
     let vertical = 0;
-    if (exploreKeys.has("Space")) vertical += 1;
-    if (exploreKeys.has("ShiftLeft") || exploreKeys.has("ShiftRight")) vertical -= 1;
+    if (!exploreFocused && !exploreReturning) {
+      if (exploreKeys.has("Space")) vertical += 1;
+      if (exploreKeys.has("ShiftLeft") || exploreKeys.has("ShiftRight")) vertical -= 1;
+    }
     const sin = Math.sin(exploreYaw);
     const cos = Math.cos(exploreYaw);
     const level = Math.cos(explorePitch);
@@ -873,42 +1055,132 @@ export async function mountGame(canvas, hooks) {
     exploreVelocity.x = THREE.MathUtils.damp(exploreVelocity.x, exploreWish.x * speed, 7, dt);
     exploreVelocity.y = THREE.MathUtils.damp(exploreVelocity.y, exploreWish.y * speed, 7, dt);
     exploreVelocity.z = THREE.MathUtils.damp(exploreVelocity.z, exploreWish.z * speed, 7, dt);
-    explorePosition.addScaledVector(exploreVelocity, dt);
-    explorePosition.y = THREE.MathUtils.clamp(explorePosition.y, 2.4, 68);
-    const reach = ISLAND + 8;
-    const distance = Math.hypot(explorePosition.x, explorePosition.z);
-    if (distance > reach) {
-      explorePosition.x *= reach / distance;
-      explorePosition.z *= reach / distance;
+    if (!exploreFocused && !exploreReturning) {
+      explorePosition.addScaledVector(exploreVelocity, dt);
+      explorePosition.y = THREE.MathUtils.clamp(explorePosition.y, 2.4, 68);
+      const reach = ISLAND + 8;
+      const distance = Math.hypot(explorePosition.x, explorePosition.z);
+      if (distance > reach) {
+        explorePosition.x *= reach / distance;
+        explorePosition.z *= reach / distance;
+      }
     }
+    driftCity(dt);
+    updateExploreFocus(dt);
     camera.position.copy(explorePosition);
     camera.rotation.set(explorePitch, exploreYaw, 0, "YXZ");
-    driftCity(dt);
-    updateExploreSelection();
+    updateExploreSelection(dt);
     followSun();
   }
 
-  function syncExploreOutline(outline, item, pulse = 0) {
+  function outlineHull(source) {
+    let hull = outlineHulls.get(source);
+    if (hull) return hull;
+
+    const position = source.getAttribute("position");
+    const points = [];
+    const used = new Set();
+    const addPoint = (index) => {
+      const point = new THREE.Vector3().fromBufferAttribute(position, index);
+      const key = `${Math.round(point.x * 1000)}:${Math.round(point.y * 1000)}:${Math.round(point.z * 1000)}`;
+      if (used.has(key)) return;
+      used.add(key);
+      points.push(point);
+    };
+
+    // Los extremos conservan la silueta; el muestreo acotado evita trabar el primer hover
+    // con los modelos de alta densidad.
+    for (let x = -1; x <= 1; x++) {
+      for (let y = -1; y <= 1; y++) {
+        for (let z = -1; z <= 1; z++) {
+          if (x === 0 && y === 0 && z === 0) continue;
+          let best = 0;
+          let bestDot = -Infinity;
+          for (let index = 0; index < position.count; index++) {
+            const dot = position.getX(index) * x + position.getY(index) * y + position.getZ(index) * z;
+            if (dot > bestDot) {
+              bestDot = dot;
+              best = index;
+            }
+          }
+          addPoint(best);
+        }
+      }
+    }
+    const sampleCount = Math.min(180, position.count);
+    for (let index = 0; index < sampleCount; index++) {
+      addPoint(Math.min(position.count - 1, Math.floor(((index + 0.5) * position.count) / sampleCount)));
+    }
+
+    if (points.length >= 4) {
+      hull = new ConvexGeometry(points);
+    } else {
+      source.computeBoundingBox();
+      const size = source.boundingBox.getSize(new THREE.Vector3());
+      const center = source.boundingBox.getCenter(new THREE.Vector3());
+      hull = new THREE.BoxGeometry(size.x, size.y, size.z).translate(center.x, center.y, center.z);
+    }
+    outlineHulls.set(source, hull);
+    return hull;
+  }
+
+  function syncExploreOutline(outline, mask, item, pulse = 0, reveal = 1) {
     const target = item?.target;
-    if (!target || (target.state && target.state !== "idle")) {
+    if (!target?.mesh || (target.state && target.state !== "idle")) {
       outline.visible = false;
+      mask.visible = false;
       return;
     }
-    outline.geometry = target.mesh.geometry;
+    const geometry = outlineHull(target.mesh.geometry);
+    outline.geometry = geometry;
     outline.position.copy(target.mesh.position);
     outline.quaternion.copy(target.mesh.quaternion);
     const extent = Math.max(0.5, target.eatR, target.height * 0.35);
-    const expansion = 1 + 0.08 / extent + pulse;
+    const expansion = 1 + (0.025 + 0.055 * reveal) / extent + pulse;
     outline.scale.copy(target.mesh.scale).multiplyScalar(expansion);
     outline.visible = true;
+    mask.geometry = geometry;
+    mask.position.copy(target.mesh.position);
+    mask.quaternion.copy(target.mesh.quaternion);
+    mask.scale.copy(target.mesh.scale);
+    mask.visible = true;
   }
 
-  function updateExploreSelection() {
+  function updateExploreSelection(dt = 0) {
     const pulse = (Math.sin(timeU.value * 4) + 1) * 0.006;
-    syncExploreOutline(selectedOutline, exploreSelected, pulse);
+    syncExploreOutline(selectedOutline, selectedOutlineMask, exploreSelected, pulse);
     selectedOutline.material.opacity = 0.78 + Math.sin(timeU.value * 4) * 0.14;
-    if (exploreHovered === exploreSelected) hoverOutline.visible = false;
-    else syncExploreOutline(hoverOutline, exploreHovered);
+
+    if (exploreHovered !== hoverVisualItem) {
+      if (hoverVisualItem && hoverStrength > 0.01) {
+        hoverExitItem = hoverVisualItem;
+        hoverExitStrength = hoverStrength;
+      }
+      hoverVisualItem = exploreHovered;
+      hoverStrength = 0;
+    }
+
+    const showHover = Boolean(hoverVisualItem && hoverVisualItem !== exploreSelected);
+    hoverStrength = THREE.MathUtils.damp(hoverStrength, showHover ? 1 : 0, 12, dt);
+    hoverExitStrength = THREE.MathUtils.damp(hoverExitStrength, 0, 14, dt);
+    const hoverEase = THREE.MathUtils.smoothstep(hoverStrength, 0, 1);
+    const exitEase = THREE.MathUtils.smoothstep(hoverExitStrength, 0, 1);
+
+    syncExploreOutline(hoverOutline, hoverOutlineMask, hoverVisualItem, 0, hoverEase);
+    hoverOutline.material.opacity = 0.78 * hoverEase;
+    if (!showHover && hoverStrength < 0.01) {
+      hoverOutline.visible = false;
+      hoverOutlineMask.visible = false;
+    }
+
+    syncExploreOutline(hoverExitOutline, hoverExitOutlineMask, hoverExitItem, 0, exitEase);
+    hoverExitOutline.material.opacity = 0.78 * exitEase;
+    if (hoverExitStrength < 0.01 || hoverExitItem === exploreSelected) {
+      hoverExitItem = null;
+      hoverExitStrength = 0;
+      hoverExitOutline.visible = false;
+      hoverExitOutlineMask.visible = false;
+    }
   }
 
   function publicMarketItem(item) {
@@ -922,7 +1194,7 @@ export async function mountGame(canvas, hooks) {
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     aimRay.setFromCamera(pointer, camera);
-    const markerHit = aimRay.intersectObjects([...brandMarkers.values()], false)[0];
+    const markerHit = aimRay.intersectObjects([...brandMarkers.values()], true)[0];
     if (markerHit && markerHit.distance < 100) return markerHit.object.userData.marketItem;
     const hit = aimRay.intersectObjects(batchList.map((record) => record.mesh), false)[0];
     if (!hit || hit.distance > 100) return null;
@@ -934,6 +1206,17 @@ export async function mountGame(canvas, hooks) {
   function pickExploreItem(clientX, clientY) {
     if (phase !== "explore") return null;
     exploreSelected = raycastExploreItem(clientX, clientY);
+    if (exploreSelected) focusExploreItem(exploreSelected);
+    else restoreExploreView();
+    updateExploreSelection();
+    return publicMarketItem(exploreSelected);
+  }
+
+  function selectExploreItem(itemId) {
+    if (phase !== "explore") return null;
+    exploreSelected = marketItems.find((item) => item.id === itemId) || null;
+    if (exploreSelected) focusExploreItem(exploreSelected);
+    else restoreExploreView();
     updateExploreSelection();
     return publicMarketItem(exploreSelected);
   }
@@ -1899,18 +2182,21 @@ export async function mountGame(canvas, hooks) {
       else exploreKeys.delete(code);
     },
     rotateExplore(deltaX, deltaY) {
-      exploreYaw -= deltaX * 0.0032;
-      explorePitch = THREE.MathUtils.clamp(explorePitch - deltaY * 0.0026, -1.05, 0.72);
+      if (exploreFocused || exploreReturning) return;
+      exploreYaw -= deltaX * 0.0024;
+      explorePitch = THREE.MathUtils.clamp(explorePitch - deltaY * 0.0021, -1.05, 0.72);
     },
     pickExploreItem,
+    selectExploreItem,
     hoverExploreItem,
     clearExploreHover() {
       exploreHovered = null;
-      hoverOutline.visible = false;
     },
     clearExploreSelection() {
       exploreSelected = null;
+      restoreExploreView();
       selectedOutline.visible = false;
+      selectedOutlineMask.visible = false;
     },
     previewBranding(record) {
       setBranding(record);
@@ -1922,7 +2208,7 @@ export async function mountGame(canvas, hooks) {
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       aimRay.setFromCamera(pointer, camera);
-      const hit = aimRay.intersectObjects([...brandMarkers.values()], false)[0];
+      const hit = aimRay.intersectObjects([...brandMarkers.values()], true)[0];
       const url = hit?.object.userData.url;
       if (!url) return false;
       window.open(url, "_blank", "noopener,noreferrer");

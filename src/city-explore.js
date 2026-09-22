@@ -1,6 +1,15 @@
 const BRAND_COLORS = ["#2257e6", "#f05a35", "#111827", "#16a06d", "#8b5cf6", "#eab308"];
 const STORAGE_KEY = "hoyo-market-places-v2";
-const ICONS = { building: "▥", vehicle: "◆", place: "●", parcel: "▦" };
+const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const DEFAULT_DESIGN = { x: 0.5, y: 0.5, scale: 0.46, rotation: 0 };
+const SYNC_COPY = {
+  online: "Tu marca aparece para todos los jugadores al instante.",
+  local: "Sin conexión con la ciudad: se guarda solo en este navegador.",
+};
+const MOVE_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"];
+
+const priceFormat = new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const dateFormat = new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", year: "numeric" });
 
 function safeUrl(value) {
   const raw = value.trim();
@@ -11,6 +20,49 @@ function safeUrl(value) {
   } catch {
     return "";
   }
+}
+
+function displayUrl(url) {
+  try {
+    const { hostname, pathname } = new URL(url);
+    return `${hostname.replace(/^www\./, "")}${pathname === "/" ? "" : pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function formatDate(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? dateFormat.format(date) : "";
+}
+
+function initials(company) {
+  return company.trim().slice(0, 2).toUpperCase();
+}
+
+const clamp = (value, min, max, fallback) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+};
+
+function normalizeDesign(design) {
+  return {
+    x: clamp(design?.x, 0.05, 0.95, DEFAULT_DESIGN.x),
+    y: clamp(design?.y, 0.05, 0.95, DEFAULT_DESIGN.y),
+    scale: clamp(design?.scale, 0.18, 0.82, DEFAULT_DESIGN.scale),
+    rotation: clamp(design?.rotation, -45, 45, DEFAULT_DESIGN.rotation),
+  };
+}
+
+function sameDesign(a, b) {
+  return ["x", "y", "scale", "rotation"].every((key) => Math.abs(a[key] - b[key]) < 0.001);
+}
+
+function searchKey(value) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es");
 }
 
 function readCache() {
@@ -31,7 +83,8 @@ function writeCache(records) {
 }
 
 async function compactImage(file) {
-  if (file.size > 1024 * 1024) throw new Error("El archivo supera 1 MB.");
+  if (!LOGO_TYPES.includes(file.type)) throw new Error("Usá una imagen PNG, JPG o WebP.");
+  if (file.size > 1024 * 1024) throw new Error("La imagen pesa más de 1 MB.");
   const source = await createImageBitmap(file);
   const canvas = document.createElement("canvas");
   const scale = Math.min(256 / source.width, 256 / source.height, 1);
@@ -42,139 +95,496 @@ async function compactImage(file) {
   return canvas.toDataURL("image/webp", 0.84);
 }
 
+function paintMark(element, { company, logo, color }) {
+  element.style.setProperty("--brand", color);
+  element.style.backgroundImage = logo ? `url("${logo}")` : "";
+  element.classList.toggle("has-logo", Boolean(logo));
+  element.classList.toggle("is-empty", !logo && !company.trim());
+}
+
 export async function mountCityExplore(game) {
-  const canvas = document.querySelector("#view");
-  const menu = document.querySelector("#menu");
-  const root = document.querySelector("#city-explore");
-  const openButton = document.querySelector("#open-explore");
-  const closeButton = document.querySelector("#explore-close");
-  const help = document.querySelector("#explore-help");
-  const notice = document.querySelector("#explore-notice");
-  const connection = document.querySelector("#explore-connection-text");
-  const editor = document.querySelector("#explore-editor");
-  const editorClose = document.querySelector("#explore-editor-close");
-  const objectIcon = document.querySelector("#editor-object-icon");
-  const objectName = document.querySelector("#editor-object-name");
-  const objectZone = document.querySelector("#editor-object-zone");
-  const objectState = document.querySelector("#editor-object-state");
-  const brandLink = document.querySelector("#editor-brand-link");
-  const form = document.querySelector("#explore-form");
-  const brandName = document.querySelector("#brand-name");
-  const brandUrl = document.querySelector("#brand-url");
-  const brandLogo = document.querySelector("#brand-logo");
-  const logoError = document.querySelector("#brand-logo-error");
-  const formError = document.querySelector("#explore-form-error");
-  const saveButton = document.querySelector("#explore-save");
-  const colors = document.querySelector("#brand-colors");
-  const livePreview = document.querySelector("#editor-live-preview");
-  const previewLogo = document.querySelector("#editor-preview-logo");
-  const previewName = document.querySelector("#editor-preview-name");
+  const $ = (selector) => document.querySelector(selector);
+  const canvas = $("#view");
+  const menu = $("#menu");
+  const root = $("#city-explore");
+  const openButton = $("#open-explore");
+  const closeButton = $("#explore-close");
+  const help = $("#explore-help");
+  const notice = $("#explore-notice");
+
+  const directory = $("#explore-directory");
+  const directoryOpen = $("#explore-directory-open");
+  const directoryClose = $("#explore-directory-close");
+  const directoryCount = $("#explore-directory-count");
+  const directorySearch = $("#explore-directory-search");
+  const directoryList = $("#explore-directory-list");
+  const directoryEmpty = $("#explore-directory-empty");
+
+  const panel = $("#explore-editor");
+  const panelClose = $("#explore-editor-close");
+  const listingTitle = $("#listing-title");
+  const listingStatus = $("#listing-status");
+  const listingDescription = $("#listing-description");
+
+  const owner = $("#listing-owner");
+  const ownerMark = $("#owner-mark");
+  const ownerName = $("#owner-name");
+  const ownerSince = $("#owner-since");
+  const ownerLink = $("#owner-link");
+  const ownerLinkText = $("#owner-link-text");
+
+  const form = $("#explore-form");
+  const designCanvas = $("#editor-design-canvas");
+  const designContext = designCanvas.getContext("2d");
+  const designHint = $("#editor-preview-context");
+  const designScale = $("#editor-design-scale");
+  const designRotation = $("#editor-design-rotation");
+  const designReset = $("#editor-design-reset");
+  const logoDrop = $("#logo-drop");
+  const logoInitials = $("#brand-mark-initials");
+  const brandLogo = $("#brand-logo");
+  const logoRemove = $("#brand-logo-remove");
+  const logoError = $("#brand-logo-error");
+  const brandName = $("#brand-name");
+  const brandNameCount = $("#brand-name-count");
+  const brandUrl = $("#brand-url");
+  const colors = $("#brand-colors");
+  const colorValue = $("#brand-color-value");
+  const releaseButton = $("#listing-release");
+
+  const formError = $("#explore-form-error");
+  const checkoutLabel = $("#checkout-label");
+  const checkoutPrice = $("#checkout-price");
+  const saveButton = $("#explore-save");
+  const syncLine = $("#listing-sync");
+
   const inventory = game.getCityItems();
-  let records = readCache().filter((record) => inventory.some((item) => item.id === record.itemId));
+  const inInventory = (record) => inventory.some((item) => item.id === record.itemId);
+  let records = readCache()
+    .filter(inInventory)
+    .map((record) => ({ ...record, animation: "fixed" }));
   let store = null;
   let selected = null;
-  let logoData = "";
-  let logoPath = "";
-  let brandColor = BRAND_COLORS[0];
-  let animation = "float";
-  let dragging = false;
-  let dragged = false;
-  let lastX = 0;
-  let lastY = 0;
+  let draft = null;
+  let saving = false;
+  let designDragging = false;
+  let designerImage = null;
+  let designerImageSource = "";
+  let pointerDown = false;
+  let pointerMoved = false;
+  let pointerInside = false;
+  let pointerStartedWhileEditing = false;
+  let pointerDownX = 0;
+  let pointerDownY = 0;
+  let pointerX = 0;
+  let pointerY = 0;
   let previewTimer = 0;
-  let editorLocked = false;
+  let flashTimer = 0;
+  let releaseTimer = 0;
   let hoverFrame = 0;
 
   game.setBrandings(records);
 
   const recordFor = (item) => records.find((record) => record.itemId === item?.id);
+  const stateFor = (record) => (!record ? "available" : record.mine ? "mine" : "taken");
 
-  function renderColors() {
-    colors.replaceChildren();
-    for (const color of BRAND_COLORS) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.style.background = color;
-      button.className = color === brandColor ? "active" : "";
-      button.disabled = editorLocked;
-      button.setAttribute("aria-label", `Usar color ${color}`);
-      button.addEventListener("click", () => {
-        if (editorLocked) return;
-        brandColor = color;
-        renderColors();
-        updatePreview();
-      });
-      colors.append(button);
-    }
+  function draftFrom(record) {
+    return {
+      company: record?.company || "",
+      url: record?.url || "",
+      logo: record?.logo || "",
+      logoPath: record?.logoPath || "",
+      color: (record?.color || BRAND_COLORS[0]).toLowerCase(),
+      design: normalizeDesign(record?.design),
+    };
   }
 
   function previewRecord() {
     return {
       itemId: selected.id,
-      company: brandName.value.trim() || "Tu empresa",
-      url: safeUrl(brandUrl.value),
-      logo: logoData,
-      logoPath,
-      color: brandColor,
-      animation,
+      company: draft.company.trim() || "Tu marca",
+      url: safeUrl(draft.url),
+      logo: draft.logo,
+      logoPath: draft.logoPath,
+      color: draft.color,
+      animation: "fixed",
+      design: { ...draft.design },
       mine: true,
     };
   }
 
-  function updatePreview() {
-    if (!selected) return;
-    const record = previewRecord();
-    livePreview.style.setProperty("--brand", brandColor);
-    previewName.textContent = record.company;
-    previewLogo.textContent = logoData ? "" : record.company.slice(0, 2).toUpperCase();
-    previewLogo.style.backgroundImage = logoData ? `url("${logoData}")` : "";
-    clearTimeout(previewTimer);
-    previewTimer = window.setTimeout(() => game.previewBranding(record), 70);
+  function isDirty() {
+    const record = recordFor(selected);
+    if (!record?.mine) return true;
+    const saved = draftFrom(record);
+    return (
+      draft.company.trim() !== saved.company ||
+      safeUrl(draft.url) !== saved.url ||
+      draft.logo !== saved.logo ||
+      draft.color !== saved.color ||
+      !sameDesign(draft.design, saved.design)
+    );
   }
 
-  function setAnimation(value) {
-    animation = value;
-    const input = form.querySelector(`input[name="brand-animation"][value="${value}"]`);
-    if (input) input.checked = true;
+  function flash(message, tone = "success") {
+    clearTimeout(flashTimer);
+    syncLine.textContent = message;
+    syncLine.dataset.tone = tone;
+    flashTimer = window.setTimeout(() => {
+      syncLine.textContent = store ? SYNC_COPY.online : SYNC_COPY.local;
+      delete syncLine.dataset.tone;
+    }, 2800);
+  }
+
+  function showError(message) {
+    formError.textContent = message;
+    formError.hidden = !message;
+  }
+
+  function renderColors() {
+    colors.replaceChildren();
+    const custom = !BRAND_COLORS.includes(draft.color.toLowerCase());
+    for (const color of BRAND_COLORS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "brand-swatch";
+      button.style.setProperty("--swatch", color);
+      button.setAttribute("role", "radio");
+      button.setAttribute("aria-checked", String(color === draft.color.toLowerCase()));
+      button.setAttribute("aria-label", `Color ${color.toUpperCase()}`);
+      button.addEventListener("click", () => setColor(color));
+      colors.append(button);
+    }
+    const picker = document.createElement("label");
+    picker.className = `brand-swatch brand-swatch-custom${custom ? " is-set" : ""}`;
+    picker.style.setProperty("--swatch", draft.color);
+    picker.setAttribute("aria-checked", String(custom));
+    picker.title = "Elegir otro color";
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = draft.color;
+    input.setAttribute("aria-label", "Elegir otro color");
+    input.addEventListener("input", () => setColor(input.value, { rerender: false }));
+    input.addEventListener("change", () => renderColors());
+    picker.append(input);
+    colors.append(picker);
+  }
+
+  function setColor(color, { rerender = true } = {}) {
+    draft.color = color.toLowerCase();
+    if (rerender) renderColors();
+    else {
+      const picker = colors.querySelector(".brand-swatch-custom");
+      picker.style.setProperty("--swatch", draft.color);
+      picker.classList.add("is-set");
+      picker.setAttribute("aria-checked", "true");
+      for (const button of colors.querySelectorAll("button.brand-swatch")) button.setAttribute("aria-checked", "false");
+    }
+    renderDraft();
+  }
+
+  function paintDesignerSurface() {
+    const { width, height } = designCanvas;
+    const kind = selected?.kind || "building";
+    designContext.clearRect(0, 0, width, height);
+
+    if (kind === "fountain") {
+      designContext.fillStyle = "#84c95d";
+      designContext.fillRect(0, 0, width, height);
+      const gradient = designContext.createRadialGradient(width / 2, height * 0.56, 12, width / 2, height * 0.56, height * 0.48);
+      gradient.addColorStop(0, "#a7e8f3");
+      gradient.addColorStop(0.5, "#64bfd6");
+      gradient.addColorStop(0.52, "#ded8ca");
+      gradient.addColorStop(0.76, "#9d978c");
+      gradient.addColorStop(0.78, "#6f756f");
+      gradient.addColorStop(1, "#56605b");
+      designContext.fillStyle = gradient;
+      designContext.fillRect(0, 0, width, height);
+      return;
+    }
+
+    designContext.fillStyle = kind === "kiosk" ? "#9b7757" : kind === "shop" ? "#b8aaa0" : "#98a49c";
+    designContext.fillRect(0, 0, width, height);
+    designContext.fillStyle = "rgba(255,255,255,.13)";
+    designContext.fillRect(width * 0.495, 0, width * 0.012, height);
+    designContext.fillStyle = "rgba(40,55,60,.18)";
+    for (let y = 42; y < height; y += 58) designContext.fillRect(0, y, width, 7);
+
+    if (kind !== "kiosk") {
+      for (const x of [70, width - 150]) {
+        for (const y of [36, height - 91]) {
+          designContext.fillStyle = "#5f7075";
+          designContext.beginPath();
+          designContext.roundRect(x, y, 80, 55, 5);
+          designContext.fill();
+          designContext.fillStyle = "#9dd9e6";
+          designContext.fillRect(x + 9, y + 8, 62, 39);
+        }
+      }
+    }
+    designContext.fillStyle = "#48545a";
+    designContext.fillRect(0, height - 14, width, 14);
+  }
+
+  function paintDesignerArtwork() {
+    const { design } = draft;
+    const width = designCanvas.width * design.scale;
+    designContext.save();
+    designContext.translate(designCanvas.width * design.x, designCanvas.height * design.y);
+    designContext.rotate((design.rotation * Math.PI) / 180);
+
+    if (designerImage) {
+      const ratio = designerImage.width / designerImage.height;
+      let drawWidth = width;
+      let drawHeight = drawWidth / ratio;
+      const maxHeight = designCanvas.height * 0.72;
+      if (drawHeight > maxHeight) {
+        drawHeight = maxHeight;
+        drawWidth = drawHeight * ratio;
+      }
+      designContext.drawImage(designerImage, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    } else {
+      const label = draft.company.trim() || "Tu marca";
+      const fontSize = Math.max(22, width / Math.max(5.5, label.length * 0.58));
+      designContext.font = `900 ${fontSize}px "Avenir Next", sans-serif`;
+      designContext.textAlign = "center";
+      designContext.textBaseline = "middle";
+      designContext.lineJoin = "round";
+      designContext.lineWidth = Math.max(5, fontSize * 0.14);
+      designContext.strokeStyle = "rgba(255,255,255,.92)";
+      designContext.strokeText(label, 0, 0, width);
+      designContext.fillStyle = draft.color;
+      designContext.fillText(label, 0, 0, width);
+    }
+    designContext.restore();
+  }
+
+  function drawDesigner() {
+    if (!draft) return;
+    paintDesignerSurface();
+    paintDesignerArtwork();
+  }
+
+  function syncDesignerImage() {
+    if (designerImageSource === draft.logo) return;
+    designerImageSource = draft.logo;
+    designerImage = null;
+    if (!draft.logo) return;
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      if (designerImageSource !== draft?.logo) return;
+      designerImage = image;
+      drawDesigner();
+    };
+    image.src = draft.logo;
+  }
+
+  function syncDesignControls() {
+    designScale.value = String(Math.round(draft.design.scale * 100));
+    designRotation.value = String(Math.round(draft.design.rotation));
+  }
+
+  function renderDraft() {
+    if (!selected || !draft) return;
+    const company = draft.company.trim();
+    paintMark(logoDrop, draft);
+    logoInitials.textContent = draft.logo ? "" : initials(company);
+    logoRemove.hidden = !draft.logo;
+    brandNameCount.textContent = `${draft.company.length}/24`;
+    colorValue.textContent = draft.color.toUpperCase();
+    syncDesignerImage();
+    drawDesigner();
+    if (!saving) {
+      const state = stateFor(recordFor(selected));
+      saveButton.disabled = state === "mine" && !isDirty();
+    }
+    clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => game.previewBranding(previewRecord()), 70);
+  }
+
+  function renderListing() {
+    const item = selected;
+    const record = recordFor(item);
+    const state = stateFor(record);
+    panel.dataset.state = state;
+    listingTitle.textContent = item.name;
+    listingDescription.textContent = item.description || "";
+    listingStatus.textContent =
+      state === "mine" ? "Es tuyo" : state === "taken" ? `Reservado por ${record.company}` : "Disponible";
+    panel.style.setProperty("--brand", record?.color || "#2f9e6b");
+    designHint.textContent =
+      item.placement === "medallion"
+        ? "Arrastrá tu marca para ubicarla en el frente de la fuente."
+        : "Arrastrá tu marca para ubicarla en la fachada.";
+
+    owner.hidden = state !== "taken";
+    form.hidden = state === "taken";
+    if (state === "taken") {
+      paintMark(ownerMark, record);
+      ownerMark.textContent = record.logo ? "" : initials(record.company);
+      ownerName.textContent = record.company;
+      const since = formatDate(record.createdAt);
+      ownerSince.textContent = since ? `Desde el ${since}` : "";
+      ownerLink.hidden = !record.url;
+      ownerLink.href = record.url || "";
+      ownerLinkText.textContent = record.url ? displayUrl(record.url) : "";
+    }
+
+    releaseButton.hidden = state !== "mine";
+    resetRelease();
+    if (state === "mine") {
+      const since = formatDate(record.createdAt);
+      checkoutLabel.textContent = since ? "Reservado desde" : "Tu espacio";
+      checkoutPrice.textContent = since || priceFormat.format(record.price ?? item.price);
+      saveButton.textContent = "Guardar cambios";
+    } else {
+      checkoutLabel.textContent = "Precio";
+      checkoutPrice.textContent = priceFormat.format(item.price);
+      saveButton.textContent = "Reservar espacio";
+    }
+    saveButton.disabled = false;
+  }
+
+  function loadDraft() {
+    draft = draftFrom(recordFor(selected));
+    designerImageSource = "";
+    designerImage = null;
+    brandName.value = draft.company;
+    brandUrl.value = draft.url;
+    brandLogo.value = "";
+    brandName.setCustomValidity("");
+    brandUrl.setCustomValidity("");
+    logoError.hidden = true;
+    showError("");
+    syncDesignControls();
+    renderColors();
   }
 
   function openEditor(item) {
+    document.body.classList.remove("explore-hover");
     selected = item;
-    const record = recordFor(item);
-    const mine = record?.mine;
-    const occupied = record && !mine;
-    editorLocked = Boolean(occupied);
-    objectIcon.textContent = ICONS[item.category] || "●";
-    objectName.textContent = item.name;
-    objectZone.textContent = item.zone;
-    objectState.textContent = mine ? "Tu objeto" : occupied ? `De ${record.company}` : "Disponible";
-    objectState.className = occupied ? "occupied" : mine ? "mine" : "";
-    brandLink.href = record?.url || "";
-    brandLink.hidden = !record?.url;
-    brandName.value = record?.company || "";
-    brandUrl.value = record?.url || "";
-    logoData = record?.logo || "";
-    logoPath = record?.logoPath || "";
-    brandLogo.value = "";
-    brandColor = record?.color || BRAND_COLORS[0];
-    setAnimation(record?.animation || "float");
-    for (const input of form.elements) input.disabled = Boolean(occupied);
-    saveButton.hidden = Boolean(occupied);
-    formError.hidden = true;
-    logoError.hidden = true;
-    renderColors();
-    editor.hidden = false;
+    renderListing();
+    loadDraft();
+    panel.hidden = false;
+    panel.querySelector(".listing-scroll").scrollTop = 0;
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
     notice.classList.add("hidden");
-    updatePreview();
+    if (stateFor(recordFor(item)) === "taken") game.setBrandings(records);
+    else renderDraft();
   }
 
   function closeEditor({ restore = true } = {}) {
     clearTimeout(previewTimer);
-    editor.hidden = true;
+    panel.hidden = true;
     selected = null;
+    draft = null;
     game.clearExploreSelection();
     if (restore) game.setBrandings(records);
     notice.classList.remove("hidden");
+  }
+
+  // Realtime updates must not wipe what the buyer is typing; only reset when ownership changed.
+  function refreshSelected(previousState) {
+    if (!selected) return;
+    const record = recordFor(selected);
+    const state = stateFor(record);
+    if (state !== previousState) {
+      openEditor(selected);
+      if (state === "taken") flash("Otra marca acaba de reservar este espacio.", "warning");
+      return;
+    }
+    const dirty = state === "mine" && isDirty();
+    renderListing();
+    if (state === "mine" && !dirty) loadDraft();
+    if (state !== "taken") renderDraft();
+  }
+
+  function resetRelease() {
+    clearTimeout(releaseTimer);
+    releaseButton.classList.remove("is-confirming");
+    releaseButton.textContent = "Liberar este espacio";
+  }
+
+  async function setLogo(file) {
+    logoError.hidden = true;
+    if (!file) return;
+    try {
+      draft.logo = await compactImage(file);
+      renderDraft();
+    } catch (error) {
+      logoError.textContent = error.message || "No pudimos leer esa imagen.";
+      logoError.hidden = false;
+    } finally {
+      brandLogo.value = "";
+    }
+  }
+
+  function renderDirectory() {
+    const query = searchKey(directorySearch.value.trim());
+    const entries = records
+      .map((record) => ({ record, item: inventory.find((item) => item.id === record.itemId) }))
+      .filter(({ item }) => item)
+      .filter(({ record, item }) => searchKey(`${record.company} ${item.name} ${item.zone}`).includes(query))
+      .sort((a, b) => a.record.company.localeCompare(b.record.company, "es"));
+
+    directoryCount.textContent = String(records.length);
+    directoryList.replaceChildren();
+    for (const { record, item } of entries) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "directory-entry";
+
+      const mark = document.createElement("span");
+      mark.className = "brand-mark";
+      paintMark(mark, record);
+      mark.textContent = record.logo ? "" : initials(record.company);
+
+      const copy = document.createElement("span");
+      const company = document.createElement("b");
+      company.textContent = record.company;
+      const location = document.createElement("small");
+      location.textContent = `${item.name} · ${item.zone}`;
+      copy.append(company, location);
+
+      const action = document.createElement("em");
+      action.textContent = "Visitar";
+      button.append(mark, copy, action);
+      button.addEventListener("click", () => visitDirectoryRecord(record));
+      directoryList.append(button);
+    }
+    directoryEmpty.hidden = entries.length > 0;
+    const [title, detail] = directoryEmpty.children;
+    if (!records.length) {
+      title.textContent = "Todavía no hay sponsors";
+      detail.textContent = "Las marcas guardadas aparecerán acá para poder visitarlas.";
+    } else if (!entries.length) {
+      title.textContent = "No encontramos resultados";
+      detail.textContent = "Probá buscando otra marca, edificio o zona.";
+    }
+  }
+
+  function visitDirectoryRecord(record) {
+    const item = game.selectExploreItem(record.itemId);
+    if (!item) return;
+    directory.hidden = true;
+    directorySearch.blur();
+    openEditor(item);
+  }
+
+  function openDirectory() {
+    if (root.hidden) return;
+    if (!panel.hidden) closeEditor();
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    directory.hidden = false;
+    renderDirectory();
+    requestAnimationFrame(() => directorySearch.focus());
+  }
+
+  function closeDirectory({ resume = true } = {}) {
+    directory.hidden = true;
+    directorySearch.blur();
+    if (resume) requestMouseLook();
   }
 
   function openExplore() {
@@ -184,11 +594,14 @@ export async function mountCityExplore(game) {
     notice.classList.remove("hidden");
     game.beginExplore();
     canvas.focus();
+    requestMouseLook();
   }
 
   function closeExplore() {
+    closeDirectory({ resume: false });
     closeEditor();
     document.body.classList.remove("explore-hover");
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
     game.clearExploreHover();
     root.hidden = true;
     menu.hidden = false;
@@ -197,28 +610,49 @@ export async function mountCityExplore(game) {
 
   async function syncRecords() {
     if (!store) return;
-    records = (await store.list()).filter((record) => inventory.some((item) => item.id === record.itemId));
+    const previousState = selected ? stateFor(recordFor(selected)) : null;
+    records = (await store.list()).filter(inInventory);
     writeCache(records);
-    game.setBrandings(records);
-    if (selected) openEditor(selected);
+    renderDirectory();
+    if (!selected) {
+      game.setBrandings(records);
+      return;
+    }
+    const others = records.filter((record) => record.itemId !== selected.id);
+    const state = stateFor(recordFor(selected));
+    game.setBrandings(state === "taken" ? records : others);
+    refreshSelected(previousState);
   }
 
   openButton.addEventListener("click", openExplore);
   closeButton.addEventListener("click", closeExplore);
-  editorClose.addEventListener("click", () => closeEditor());
-  document.querySelector("#explore-help-close").addEventListener("click", () => {
+  directoryOpen.addEventListener("click", openDirectory);
+  directoryClose.addEventListener("click", () => closeDirectory());
+  directorySearch.addEventListener("input", renderDirectory);
+  panelClose.addEventListener("click", () => {
+    closeEditor();
+    requestMouseLook();
+  });
+  $("#explore-help-close").addEventListener("click", () => {
     help.hidden = true;
   });
 
   window.addEventListener("keydown", (event) => {
     if (root.hidden) return;
+    const typing = document.activeElement?.matches("input");
+    if (event.key === "/" && !typing) {
+      event.preventDefault();
+      openDirectory();
+      return;
+    }
     if (event.key === "Escape") {
-      if (!editor.hidden) closeEditor();
+      if (!directory.hidden) closeDirectory();
+      else if (!panel.hidden) closeEditor();
       else closeExplore();
       return;
     }
-    if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"].includes(event.code)) {
-      if (document.activeElement?.matches("input")) return;
+    if (MOVE_KEYS.includes(event.code)) {
+      if (typing || panel.contains(document.activeElement)) return;
       event.preventDefault();
       game.setExploreKey(event.code, true);
     }
@@ -227,135 +661,275 @@ export async function mountCityExplore(game) {
     if (!root.hidden) game.setExploreKey(event.code, false);
   });
   window.addEventListener("blur", () => {
-    for (const code of ["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"]) {
-      game.setExploreKey(code, false);
+    for (const code of MOVE_KEYS) game.setExploreKey(code, false);
+  });
+
+  function refreshExploreHover() {
+    hoverFrame = 0;
+    if (!pointerInside || root.hidden || !panel.hidden) return;
+    const item = game.hoverExploreItem(pointerX, pointerY);
+    document.body.classList.toggle("explore-hover", Boolean(item));
+    hoverFrame = requestAnimationFrame(refreshExploreHover);
+  }
+
+  function stopExplorePointer() {
+    pointerInside = false;
+    cancelAnimationFrame(hoverFrame);
+    hoverFrame = 0;
+    document.body.classList.remove("explore-hover");
+    game.clearExploreHover();
+  }
+
+  function requestMouseLook() {
+    if (
+      root.hidden ||
+      !panel.hidden ||
+      document.pointerLockElement === canvas ||
+      typeof canvas.requestPointerLock !== "function"
+    ) {
+      return false;
     }
+    const request = canvas.requestPointerLock?.();
+    request?.catch?.(() => {});
+    return true;
+  }
+
+  function centerExplorePointer() {
+    const rect = canvas.getBoundingClientRect();
+    pointerX = rect.left + rect.width / 2;
+    pointerY = rect.top + rect.height / 2;
+  }
+
+  document.addEventListener("pointerlockchange", () => {
+    pointerDown = false;
+    pointerMoved = false;
+    if (document.pointerLockElement !== canvas || root.hidden || !panel.hidden) {
+      stopExplorePointer();
+      return;
+    }
+    pointerInside = true;
+    centerExplorePointer();
+    if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
   });
 
   canvas.addEventListener("pointerdown", (event) => {
-    if (root.hidden || event.button !== 0 || !editor.hidden) return;
-    dragging = true;
-    dragged = false;
-    document.body.classList.remove("explore-hover");
-    game.clearExploreHover();
-    lastX = event.clientX;
-    lastY = event.clientY;
-    canvas.setPointerCapture(event.pointerId);
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (root.hidden || !editor.hidden) return;
-    if (!dragging) {
-      cancelAnimationFrame(hoverFrame);
-      hoverFrame = requestAnimationFrame(() => {
-        const item = game.hoverExploreItem(event.clientX, event.clientY);
-        document.body.classList.toggle("explore-hover", Boolean(item));
-      });
+    if (root.hidden || event.button !== 0) return;
+    if (
+      panel.hidden &&
+      event.pointerType !== "touch" &&
+      document.pointerLockElement !== canvas &&
+      requestMouseLook()
+    ) {
       return;
     }
-    const dx = event.clientX - lastX;
-    const dy = event.clientY - lastY;
-    if (Math.abs(dx) + Math.abs(dy) > 2) dragged = true;
-    game.rotateExplore(dx, dy);
-    lastX = event.clientX;
-    lastY = event.clientY;
+    pointerDown = true;
+    pointerMoved = false;
+    pointerStartedWhileEditing = !panel.hidden;
+    pointerDownX = event.clientX;
+    pointerDownY = event.clientY;
+    if (document.pointerLockElement !== canvas) canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (root.hidden) return;
+    if (document.pointerLockElement === canvas) {
+      pointerInside = true;
+      centerExplorePointer();
+      if (pointerDown && Math.abs(event.movementX) + Math.abs(event.movementY) > 4) pointerMoved = true;
+      game.rotateExplore(event.movementX, event.movementY);
+      if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
+      return;
+    }
+    pointerInside = true;
+    pointerX = event.clientX;
+    pointerY = event.clientY;
+    if (pointerDown && Math.abs(pointerX - pointerDownX) + Math.abs(pointerY - pointerDownY) > 4) {
+      pointerMoved = true;
+    }
+    if (!panel.hidden) return;
+    if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
   });
   canvas.addEventListener("pointerup", (event) => {
-    if (!dragging || root.hidden) return;
-    dragging = false;
+    if (!pointerDown || root.hidden) return;
+    pointerDown = false;
+    const wasEditing = pointerStartedWhileEditing;
+    pointerStartedWhileEditing = false;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    if (dragged) return;
-    const item = game.pickExploreItem(event.clientX, event.clientY);
+    if (pointerMoved) return;
+    if (wasEditing) {
+      closeEditor();
+      requestMouseLook();
+      return;
+    }
+    const item = game.pickExploreItem(pointerX, pointerY);
     if (item) openEditor(item);
     else {
-      notice.textContent = "Acercate un poco más para seleccionar ese objeto";
+      notice.textContent = "Ese objeto no está disponible para personalizar";
       notice.classList.remove("hidden");
       window.setTimeout(() => {
-        notice.textContent = "Acercate y hacé clic en cualquier objeto";
+        notice.textContent = "Elegí una fachada o un espacio destacado";
       }, 1800);
     }
   });
   canvas.addEventListener("pointerleave", () => {
-    if (root.hidden) return;
-    document.body.classList.remove("explore-hover");
-    game.clearExploreHover();
+    if (root.hidden || document.pointerLockElement === canvas) return;
+    stopExplorePointer();
+  });
+  canvas.addEventListener("pointercancel", () => {
+    pointerDown = false;
+    pointerStartedWhileEditing = false;
+    stopExplorePointer();
   });
 
-  brandName.addEventListener("input", updatePreview);
-  brandUrl.addEventListener("input", updatePreview);
-  form.addEventListener("change", (event) => {
-    if (event.target.name !== "brand-animation") return;
-    animation = event.target.value;
-    updatePreview();
+  function moveDesign(event) {
+    const rect = designCanvas.getBoundingClientRect();
+    draft.design.x = clamp((event.clientX - rect.left) / rect.width, 0.05, 0.95, 0.5);
+    draft.design.y = clamp((event.clientY - rect.top) / rect.height, 0.05, 0.95, 0.5);
+    renderDraft();
+  }
+
+  designCanvas.addEventListener("pointerdown", (event) => {
+    if (!draft || event.button !== 0) return;
+    designDragging = true;
+    designCanvas.setPointerCapture(event.pointerId);
+    moveDesign(event);
   });
-  brandLogo.addEventListener("change", async () => {
+  designCanvas.addEventListener("pointermove", (event) => {
+    if (designDragging) moveDesign(event);
+  });
+  designCanvas.addEventListener("pointerup", (event) => {
+    designDragging = false;
+    if (designCanvas.hasPointerCapture(event.pointerId)) designCanvas.releasePointerCapture(event.pointerId);
+  });
+  designCanvas.addEventListener("pointercancel", () => {
+    designDragging = false;
+  });
+  designScale.addEventListener("input", () => {
+    draft.design.scale = Number(designScale.value) / 100;
+    renderDraft();
+  });
+  designRotation.addEventListener("input", () => {
+    draft.design.rotation = Number(designRotation.value);
+    renderDraft();
+  });
+  designReset.addEventListener("click", () => {
+    draft.design = { ...DEFAULT_DESIGN };
+    syncDesignControls();
+    renderDraft();
+  });
+
+  brandName.addEventListener("input", () => {
+    draft.company = brandName.value;
+    brandName.setCustomValidity("");
+    renderDraft();
+  });
+  brandUrl.addEventListener("input", () => {
+    draft.url = brandUrl.value;
+    brandUrl.setCustomValidity("");
+    renderDraft();
+  });
+
+  brandLogo.addEventListener("change", () => setLogo(brandLogo.files[0]));
+  logoRemove.addEventListener("click", () => {
+    draft.logo = "";
     logoError.hidden = true;
+    renderDraft();
+  });
+  logoDrop.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    logoDrop.classList.add("is-dragging");
+  });
+  logoDrop.addEventListener("dragleave", () => logoDrop.classList.remove("is-dragging"));
+  logoDrop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    logoDrop.classList.remove("is-dragging");
+    setLogo(event.dataTransfer.files[0]);
+  });
+
+  releaseButton.addEventListener("click", async () => {
+    const record = recordFor(selected);
+    if (!record?.mine) return;
+    if (!releaseButton.classList.contains("is-confirming")) {
+      releaseButton.classList.add("is-confirming");
+      releaseButton.textContent = "Confirmar: quitar mi marca de este espacio";
+      releaseTimer = window.setTimeout(resetRelease, 3500);
+      return;
+    }
+    resetRelease();
+    releaseButton.disabled = true;
+    showError("");
     try {
-      const [file] = brandLogo.files;
-      if (!file) return;
-      logoData = await compactImage(file);
-      updatePreview();
+      if (store) await store.remove(record);
+      records = records.filter((candidate) => candidate.itemId !== record.itemId);
+      writeCache(records);
+      game.setBrandings(records);
+      renderDirectory();
+      openEditor(selected);
+      flash("Liberaste el espacio. Quedó disponible para otras marcas.");
     } catch (error) {
-      logoError.textContent = error.message || "No pudimos leer esa imagen.";
-      logoError.hidden = false;
-      brandLogo.value = "";
+      showError(error.message || "No pudimos liberar el espacio.");
+    } finally {
+      releaseButton.disabled = false;
     }
   });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!selected || !brandName.value.trim()) {
+    if (!selected || saving || stateFor(recordFor(selected)) === "taken") return;
+    if (!draft.company.trim()) {
       brandName.setCustomValidity("Escribí el nombre de tu marca.");
       brandName.reportValidity();
       return;
     }
-    brandName.setCustomValidity("");
-    if (brandUrl.value.trim() && !safeUrl(brandUrl.value)) {
-      brandUrl.setCustomValidity("Ingresá un link válido.");
+    if (draft.url.trim() && !safeUrl(draft.url)) {
+      brandUrl.setCustomValidity("Revisá el link: no parece una dirección válida.");
       brandUrl.reportValidity();
       return;
     }
-    brandUrl.setCustomValidity("");
+    const previous = recordFor(selected);
+    const wasMine = Boolean(previous?.mine);
+    saving = true;
     saveButton.disabled = true;
-    saveButton.textContent = "Guardando…";
-    formError.hidden = true;
+    saveButton.textContent = wasMine ? "Guardando…" : "Reservando…";
+    showError("");
     try {
-      const record = previewRecord();
-      const saved = store ? await store.save(record, selected) : record;
+      const record = { ...previewRecord(), company: draft.company.trim() };
+      const saved = store
+        ? await store.save(record, selected, previous)
+        : {
+            ...record,
+            price: selected.price,
+            createdAt: previous?.createdAt || new Date().toISOString(),
+          };
       records = [...records.filter((candidate) => candidate.itemId !== saved.itemId), saved];
       writeCache(records);
       game.setBrandings(records);
-      objectState.textContent = "Guardado";
-      objectState.className = "mine";
-      brandLink.href = saved.url || "";
-      brandLink.hidden = !saved.url;
-      saveButton.textContent = "Guardado ✓";
-      window.setTimeout(() => {
-        saveButton.disabled = false;
-        saveButton.textContent = "Guardar cambios";
-      }, 1200);
+      renderDirectory();
+      saving = false;
+      renderListing();
+      loadDraft();
+      renderDraft();
+      flash(wasMine ? "Cambios guardados." : "Listo. Tu marca ya está en la ciudad.");
     } catch (error) {
-      formError.textContent = error.message || "No pudimos guardar los cambios.";
-      formError.hidden = false;
+      saving = false;
+      showError(error.message || "No pudimos guardar los cambios.");
       saveButton.disabled = false;
-      saveButton.textContent = "Guardar en la ciudad";
+      saveButton.textContent = wasMine ? "Guardar cambios" : "Reservar espacio";
     }
   });
 
-  renderColors();
+  syncLine.textContent = SYNC_COPY.local;
+  renderDirectory();
   try {
     const { connectSponsorStore, sponsorStoreEnabled } = await import("./sponsor-store.js");
-    if (!sponsorStoreEnabled) {
-      connection.textContent = "Modo local";
-      return;
-    }
+    if (!sponsorStoreEnabled) return;
     store = await connectSponsorStore();
     await syncRecords();
-    connection.textContent = "Ciudad sincronizada";
+    syncLine.textContent = SYNC_COPY.online;
     store.subscribe(() => {
       syncRecords().catch((error) => console.warn("No se pudieron actualizar las marcas", error));
     });
   } catch (error) {
     console.warn("Supabase no disponible; usando modo local", error);
-    connection.textContent = "Modo local";
+    store = null;
   }
 }
