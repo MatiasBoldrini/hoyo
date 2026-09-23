@@ -65,8 +65,23 @@ function throwIf(error) {
   if (error) throw partyError(error);
 }
 
+const REQUEST_TIMEOUT = 12000;
+
+function withTimeout(request, message) {
+  let timeout;
+  return Promise.race([
+    Promise.resolve(request),
+    new Promise((_, reject) => {
+      timeout = globalThis.setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT);
+    }),
+  ]).finally(() => globalThis.clearTimeout(timeout));
+}
+
 async function readSession() {
-  const { data, error } = await supabase.auth.getSession();
+  const { data, error } = await withTimeout(
+    supabase.auth.getSession(),
+    "La conexión con la party tardó demasiado.",
+  );
   throwIf(error);
   return data.session;
 }
@@ -95,7 +110,10 @@ async function requireSession() {
     throw new Error("Estamos terminando tu inicio de sesión. Esperá un momento e intentá de nuevo.");
   }
 
-  const { data, error } = await supabase.auth.signInAnonymously();
+  const { data, error } = await withTimeout(
+    supabase.auth.signInAnonymously(),
+    "No se pudo iniciar la sesión de la party a tiempo.",
+  );
   throwIf(error);
   if (!data.user) throw new Error("No se pudo crear una sesión para entrar a la party.");
   return data.user;
@@ -109,13 +127,16 @@ export async function connectPartyStore() {
     userId: user.id,
 
     async create(settings) {
-      const { data, error } = await supabase
-        .rpc("create_party_room", {
-          p_duration_seconds: settings.duration,
-          p_bot_count: settings.botCount,
-          p_object_refill: settings.objectRefill,
-        })
-        .single();
+      const { data, error } = await withTimeout(
+        supabase
+          .rpc("create_party_room", {
+            p_duration_seconds: settings.duration,
+            p_bot_count: settings.botCount,
+            p_object_refill: settings.objectRefill,
+          })
+          .single(),
+        "La creación de la party tardó demasiado.",
+      );
       throwIf(error);
       return partyRoomFromRow(data);
     },
@@ -123,24 +144,29 @@ export async function connectPartyStore() {
     async find(code) {
       const normalized = normalizePartyCode(code);
       if (!/^[A-Z2-9]{8}$/.test(normalized)) return null;
-      const { data, error } = await supabase
-        .rpc("join_party_room", { p_code: normalized })
-        .single();
+      const { data, error } = await withTimeout(
+        supabase.rpc("join_party_room", { p_code: normalized }).single(),
+        "La búsqueda de la party tardó demasiado.",
+      );
       if (error?.code === "P0002") return null;
       throwIf(error);
       return partyRoomFromRow(data);
     },
 
     async start(roomId) {
-      const { data, error } = await supabase
-        .rpc("start_party_room", { p_room_id: roomId })
-        .single();
+      const { data, error } = await withTimeout(
+        supabase.rpc("start_party_room", { p_room_id: roomId }).single(),
+        "El inicio de la party tardó demasiado.",
+      );
       throwIf(error);
       return partyRoomFromRow(data);
     },
 
     async finish(roomId) {
-      const { error } = await supabase.rpc("finish_party_room", { p_room_id: roomId });
+      const { error } = await withTimeout(
+        supabase.rpc("finish_party_room", { p_room_id: roomId }),
+        "No se pudo cerrar la party a tiempo.",
+      );
       throwIf(error);
     },
 

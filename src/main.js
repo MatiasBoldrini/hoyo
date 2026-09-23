@@ -1,5 +1,6 @@
 import { mountGame, PLAYER_COLORS } from "./game.js";
 import { mountCityExplore } from "./city-explore.js";
+import { mountParty } from "./party.js";
 
 const canvas = document.querySelector("#view");
 const menu = document.querySelector("#menu");
@@ -17,6 +18,7 @@ const nick = document.querySelector("#nick");
 const colors = document.querySelector("#colors");
 const swatch = document.querySelector("#color-swatch");
 const play = document.querySelector("#play");
+const openParty = document.querySelector("#open-party");
 const again = document.querySelector("#again");
 const endTitle = document.querySelector("#end-title");
 const endScore = document.querySelector("#end-score");
@@ -108,8 +110,34 @@ const game = await mountGame(canvas, {
     document.body.append(pop);
     setTimeout(() => pop.remove(), 700);
   },
+  onNetworkFrame(state) {
+    partyController?.sendGameState(state);
+  },
 });
 mountCityExplore(game);
+const partyController = mountParty({
+  getProfile() {
+    return {
+      name: nick.value.trim().slice(0, 12) || "Jugador",
+      color,
+    };
+  },
+  onOpen() {
+    menu.hidden = true;
+    end.hidden = true;
+    setColorsOpen(false);
+  },
+  onClose() {
+    showMainMenu("Cerraste la party. Podés crear otra o jugar una partida rápida.");
+  },
+  onStart(options) {
+    begin(options);
+  },
+  onGameState(state) {
+    game.syncNetworkState(state);
+  },
+});
+partyController.openFromUrl();
 
 const hudState = { danger: "", time: "", rows: "", toast: null, map: null, dot: "" };
 const MAP_LAYER_SIZE = 768;
@@ -325,7 +353,7 @@ function renderRows(list, rows) {
   }
 }
 
-function begin() {
+function begin(options = {}) {
   const name = nick.value.trim().slice(0, 12) || "Jugador";
   nick.value = name;
   localStorage.setItem("hoyo-name", name);
@@ -334,14 +362,23 @@ function begin() {
   hud.hidden = false;
   menuMessage.hidden = true;
   toast.hidden = true;
+  again.textContent = "OTRA VEZ";
   nick.blur();
   hint.classList.remove("hide");
   setTimeout(() => hint.classList.add("hide"), 4200);
-  game.start(name, color);
+  game.start(name, color, options);
 }
 
-play.addEventListener("click", begin);
-again.addEventListener("click", begin);
+play.addEventListener("click", () => begin());
+openParty.addEventListener("click", () => partyController.open());
+again.addEventListener("click", () => {
+  if (!partyController.active) {
+    begin();
+    return;
+  }
+  partyController.leave({ showMenu: false });
+  showMainMenu("La party terminó. Creá otra sala para volver a jugar con el grupo.");
+});
 canvas.addEventListener("click", (event) => {
   if (cityExplore.hidden && (!menu.hidden || !end.hidden)) {
     game.visitBrandAt(event.clientX, event.clientY);
@@ -356,6 +393,7 @@ window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !cityExplore.hidden || !menu.hidden || !end.hidden || hud.hidden) return;
   event.preventDefault();
   game.returnToMenu();
+  if (partyController.active) partyController.leave({ showMenu: false });
   showMainMenu("Saliste de la partida. Cambiá tu nombre o color y volvé a entrar.");
 });
 // Con el mouse, mantener el click y arrastrar gira la cámara. Mientras tanto el
@@ -395,9 +433,12 @@ game.onEnd = (result) => {
   localStorage.setItem("hoyo-best", String(best));
   endScore.textContent = `Puntaje ${result.score} · récord ${best}`;
   renderRows(finalList, result.rows);
+  again.textContent = partyController.active ? "VOLVER AL MENÚ" : "OTRA VEZ";
+  partyController.finish();
 };
 
 game.onPlayerDeath = () => {
+  if (partyController.active) partyController.leave({ showMenu: false });
   showMainMenu("Te tragaron. Elegí tu nombre y volvé a la ciudad.");
 };
 

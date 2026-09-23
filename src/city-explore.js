@@ -964,7 +964,8 @@ export async function mountCityExplore(game) {
     releaseButton.disabled = true;
     showError("");
     try {
-      if (store) await store.remove(record);
+      if (!store) throw new Error("No se puede liberar sin conexión al servidor.");
+      await store.remove(record);
       records = records.filter((candidate) => candidate.itemId !== record.itemId);
       writeCache(records);
       game.setBrandings(records);
@@ -981,7 +982,6 @@ export async function mountCityExplore(game) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!selected || saving) return;
-    if (!store && stateFor(recordFor(selected)) === "taken") return;
     if (!draft.company.trim()) {
       brandName.setCustomValidity("Escribí el nombre de tu marca.");
       brandName.reportValidity();
@@ -1002,7 +1002,11 @@ export async function mountCityExplore(game) {
     }
     const previous = recordFor(selected);
     const wasMine = Boolean(previous?.mine);
-    if (store && (!currentSession?.user || currentSession.user.is_anonymous)) {
+    if (!store) {
+      showError("No se puede publicar sin conexión al servidor.");
+      return;
+    }
+    if (!currentSession?.user || currentSession.user.is_anonymous) {
       authForm.hidden = false;
       authEmail.focus();
       showError("Iniciá sesión con tu email antes de continuar.");
@@ -1014,23 +1018,6 @@ export async function mountCityExplore(game) {
     showError("");
     try {
       const record = { ...previewRecord(), company: draft.company.trim() };
-      if (!store) {
-        const saved = {
-          ...record,
-          price: selected.price,
-          createdAt: previous?.createdAt || new Date().toISOString(),
-        };
-        records = [...records.filter((candidate) => candidate.itemId !== saved.itemId), saved];
-        writeCache(records);
-        game.setBrandings(records);
-        renderDirectory();
-        saving = false;
-        renderListing();
-        loadDraft();
-        renderDraft();
-        flash(wasMine ? "Cambios guardados." : "Listo. Tu marca ya está en la ciudad.");
-        return;
-      }
       if (!wasMine) {
         const checkoutUrl = await store.acquire(record, selected, previous);
         if (checkoutUrl) {

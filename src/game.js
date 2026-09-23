@@ -37,7 +37,8 @@ const BOTS = [
   ["Kai", 0x748ffc],
 ];
 
-const holeXZR = Array.from({ length: 10 }, () => new THREE.Vector3());
+const MAX_HOLES = 10;
+const holeXZR = Array.from({ length: MAX_HOLES }, () => new THREE.Vector3());
 const timeU = { value: 0 };
 
 function radiusFromMass(mass) {
@@ -682,8 +683,15 @@ export async function mountGame(canvas, hooks) {
   const rand = mulberry32(20260921);
   const objects = [];
   const holes = [];
+  const remoteHoles = new Map();
   let phase = "menu";
   let timeLeft = ROUND;
+  let roundDuration = ROUND;
+  let objectRefill = 0;
+  let refillClock = 0;
+  let networkId = "";
+  let networkHost = false;
+  let networkPublishAt = 0;
   let toast = "";
   let toastUntil = 0;
   let camOrbit = 0.4;
@@ -884,23 +892,33 @@ export async function mountGame(canvas, hooks) {
   crumbs.instanceColor.setUsage(THREE.DynamicDrawUsage);
   scene.add(crumbs);
 
-  function start(name, color) {
+  function start(name, color, options = {}) {
     for (const hole of holes) disposeHole(hole);
     holes.length = 0;
+    remoteHoles.clear();
     for (const obj of objects) resetObj(obj);
-    const used = new Set([color]);
     player = createHole(name, color, true);
-    const spots = spawnSpots(BOTS.length + 1);
+    networkId = options.networkId || "";
+    networkHost = Boolean(options.networkHost);
+    player.networkId = networkId || "local-player";
+    roundDuration = [60, 120, 180, 300].includes(options.duration) ? options.duration : ROUND;
+    objectRefill = THREE.MathUtils.clamp(Math.round(options.objectRefill || 0), 0, 2);
+    refillClock = 0;
+    networkPublishAt = 0;
+    const requestedBots = THREE.MathUtils.clamp(Math.round(options.botCount ?? 7), 0, 7);
+    const botCount = networkId && !networkHost ? 0 : requestedBots;
+    const spots = spawnSpots(botCount + 1);
     placeHole(player, spots.pop());
-    BOTS.slice(0, 7).forEach(([botName, botColor], index) => {
+    BOTS.slice(0, botCount).forEach(([botName, botColor], index) => {
       const hole = createHole(botName, botColor, false);
+      hole.networkId = `bot-${index}`;
       hole.skill = 0.72 + rand() * 0.38;
       hole.speedMul = 0.84 + (index % 3) * 0.07;
       placeHole(hole, spots.pop());
-      used.add(botColor);
     });
     phase = "play";
-    timeLeft = ROUND;
+    const elapsed = options.startedAt ? Math.max(0, (Date.now() - options.startedAt) / 1000) : 0;
+    timeLeft = Math.max(0, roundDuration - elapsed);
     toast = "";
     sfx.resume();
     sfx.begin();
@@ -908,6 +926,75 @@ export async function mountGame(canvas, hooks) {
     camYawGoal = 0;
     followCamera(0, true);
     followSun(true);
+  }
+
+  function networkState() {
+    const shared = networkHost ? holes.filter((hole) => !hole.remote) : [player];
+    return {
+      sentAt: Date.now(),
+      players: shared
+        .filter(Boolean)
+        .map((hole) => ({
+          id: hole.networkId,
+          name: hole.name,
+          color: hole.color,
+          bot: !hole.player,
+          x: hole.x,
+          z: hole.z,
+          vx: hole.vx,
+          vz: hole.vz,
+          mass: hole.mass,
+          score: hole.score,
+          radius: hole.radius,
+          alive: hole.alive,
+          invuln: hole.invuln,
+        })),
+    };
+  }
+
+  function syncNetworkState(message) {
+    if (phase !== "play" || !networkId || !Array.isArray(message?.players)) return;
+    const now = performance.now();
+    for (const state of message.players.slice(0, MAX_HOLES - 1)) {
+      if (!state || typeof state.id !== "string" || state.id === networkId) continue;
+      if (!Number.isFinite(state.x) || !Number.isFinite(state.z) || !Number.isFinite(state.radius)) continue;
+      let hole = remoteHoles.get(state.id);
+      if (!hole) {
+        if (holes.length >= MAX_HOLES) continue;
+        const name = String(state.name || "Jugador").slice(0, 12);
+        const color = Number.isInteger(state.color) ? state.color & 0xffffff : 0x748ffc;
+        hole = createHole(name, color, false);
+        hole.networkId = state.id;
+        hole.remote = true;
+        hole.x = state.x;
+        hole.z = state.z;
+        hole.group.position.set(hole.x, 0, hole.z);
+        remoteHoles.set(state.id, hole);
+      }
+      hole.remoteSeenAt = now;
+      hole.remoteGoal = {
+        x: state.x,
+        z: state.z,
+        vx: Number.isFinite(state.vx) ? state.vx : 0,
+        vz: Number.isFinite(state.vz) ? state.vz : 0,
+      };
+      hole.mass = Math.max(0, Number(state.mass) || 0);
+      hole.score = Math.max(0, Math.round(Number(state.score) || 0));
+      hole.radius = THREE.MathUtils.clamp(state.radius, START_R, 20);
+      hole.alive = state.alive !== false && now >= (hole.eatenUntil || 0);
+      hole.invuln = Math.max(0, Number(state.invuln) || 0);
+      if (hole.alive) {
+        hole.sink = 0;
+        hole.group.visible = true;
+      }
+    }
+  }
+
+  function removeRemoteHole(id, hole) {
+    remoteHoles.delete(id);
+    const index = holes.indexOf(hole);
+    if (index >= 0) holes.splice(index, 1);
+    disposeHole(hole);
   }
 
   function returnToMenu() {
@@ -920,6 +1007,7 @@ export async function mountGame(canvas, hooks) {
   function beginExplore() {
     for (const hole of holes) disposeHole(hole);
     holes.length = 0;
+    remoteHoles.clear();
     player = null;
     for (const obj of objects) resetObj(obj);
     for (const value of holeXZR) value.set(0, 0, 0);
@@ -1267,6 +1355,7 @@ export async function mountGame(canvas, hooks) {
     for (const obj of objects) stepIdle(obj, dt);
     settleObjects(dt);
     for (const obj of objects) stepFall(obj, dt);
+    refillObjects(dt);
     eatHoles(dt);
     if (phase !== "play") return;
     for (const hole of holes) syncHole(hole, dt);
@@ -1360,8 +1449,35 @@ export async function mountGame(canvas, hooks) {
     }
   }
 
+  function refillObjects(dt) {
+    if (objectRefill === 0) return;
+    refillClock += dt;
+    const interval = objectRefill === 2 ? 0.85 : 2.2;
+    if (refillClock < interval) return;
+    refillClock %= interval;
+    const available = objects.filter(
+      (obj) =>
+        obj.state === "gone" &&
+        holes.every((hole) => Math.hypot(obj.homeX - hole.x, obj.homeZ - hole.z) > hole.radius + obj.eatR + 3),
+    );
+    if (available.length === 0) return;
+    resetObj(available[Math.floor(rand() * available.length)]);
+  }
+
   function steerHoles(dt) {
+    const now = performance.now();
+    for (const [id, hole] of remoteHoles) {
+      if (now - hole.remoteSeenAt > 3500) removeRemoteHole(id, hole);
+    }
     for (const hole of holes) {
+      if (hole.remote) {
+        if (!hole.remoteGoal) continue;
+        hole.x = THREE.MathUtils.damp(hole.x, hole.remoteGoal.x, 14, dt);
+        hole.z = THREE.MathUtils.damp(hole.z, hole.remoteGoal.z, 14, dt);
+        hole.vx = hole.remoteGoal.vx;
+        hole.vz = hole.remoteGoal.vz;
+        continue;
+      }
       if (!hole.alive) {
         if (hole.player) continue;
         hole.respawn -= dt;
@@ -2168,6 +2284,11 @@ export async function mountGame(canvas, hooks) {
     flushShadowCasters(renderer, shadowX, shadowZ, shadowSpan);
     renderer.render(scene, camera);
     if (phase === "play") {
+      const now = performance.now();
+      if (networkId && hooks.onNetworkFrame && now >= networkPublishAt) {
+        networkPublishAt = now + 80;
+        hooks.onNetworkFrame(networkState());
+      }
       hooks.onFrame({
         phase,
         timeLeft,
@@ -2255,6 +2376,7 @@ export async function mountGame(canvas, hooks) {
     rotateCamera(radians) {
       camYawGoal += radians;
     },
+    syncNetworkState,
     onPlayerDeath: null,
     onEnd: null,
     destroy() {
