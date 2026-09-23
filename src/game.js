@@ -635,15 +635,21 @@ function mouthMaterial() {
 }
 
 export async function mountGame(canvas, hooks) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
   const dpr = window.devicePixelRatio || 1;
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: dpr <= 1,
+    powerPreference: "default",
+  });
   const res = {
-    ratio: Math.min(dpr, 1.5),
-    min: Math.min(dpr, 0.75),
-    max: Math.min(dpr, 2),
+    ratio: Math.min(dpr, 1),
+    min: Math.min(1, dpr, 0.75),
+    max: Math.min(dpr, 1.5),
     ceiling: Infinity,
     refresh: 1 / 60,
     calm: 0,
+    hot: 0,
+    warmup: 0,
     samples: [],
   };
   renderer.setPixelRatio(res.ratio);
@@ -668,7 +674,7 @@ export async function mountGame(canvas, hooks) {
   const sun = new THREE.DirectionalLight(0xfff6df, 1.35);
   sun.position.set(40, 70, 24);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(512, 512);
   sun.shadow.camera.near = 12;
   sun.shadow.camera.far = 220;
   sun.shadow.bias = -0.0004;
@@ -925,6 +931,7 @@ export async function mountGame(canvas, hooks) {
     toast = "";
     sfx.resume();
     sfx.begin();
+    enableShadows();
     camYaw = 0;
     camYawGoal = 0;
     followCamera(0, true);
@@ -1027,6 +1034,7 @@ export async function mountGame(canvas, hooks) {
     resetExploreOutlines();
     phase = "explore";
     viewStale = true;
+    enableShadows();
     followSun(true);
   }
 
@@ -1994,6 +2002,13 @@ export async function mountGame(canvas, hooks) {
     scene.fog.far = 190 + radius * 11;
   }
 
+  function enableShadows() {
+    if (renderer.shadowMap.enabled) return;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.needsUpdate = true;
+    shadowDirty = true;
+  }
+
   function followSun(force = false) {
     const x = player ? player.x : 0;
     const z = player ? player.z : 0;
@@ -2249,10 +2264,29 @@ export async function mountGame(canvas, hooks) {
   // Resolución dinámica: baja si se pierden frames contra el refresco de la pantalla,
   // y sube de a poco cuando sobra margen, sin pasar del último nivel que falló.
   function tuneResolution(raw) {
-    if (raw > 0.25) {
+    // Un salto de más de un segundo es la pestaña en segundo plano.
+    // Un frame lento de verdad baja la resolución enseguida: si se ignora,
+    // la GPU sigue a tope y la máquina no se recupera.
+    if (raw > 1) {
       res.samples.length = 0;
+      res.hot = 0;
       return;
     }
+    if (res.warmup < 8) {
+      res.warmup += 1;
+      return;
+    }
+    if (raw > 0.04) {
+      res.hot += 1;
+      res.calm = 0;
+      res.samples.length = 0;
+      if (res.hot >= 6 && res.ratio > res.min) {
+        res.hot = 0;
+        setRatio(Math.max(res.min, res.ratio - 0.25));
+      }
+      return;
+    }
+    res.hot = 0;
     res.samples.push(raw);
     if (res.samples.length < 90) return;
     res.samples.sort((a, b) => a - b);
@@ -2405,10 +2439,8 @@ export async function mountGame(canvas, hooks) {
     },
   };
   mountGame._api = api;
-  requestAnimationFrame(() => {
-    hooks.onReady();
-    frameWrapped();
-  });
+  hooks.onReady();
+  requestAnimationFrame(frameWrapped);
   return api;
 }
 
