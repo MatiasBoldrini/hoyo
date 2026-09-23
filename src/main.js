@@ -398,22 +398,33 @@ window.addEventListener("keydown", (event) => {
 });
 // Con el mouse, mantener el click y arrastrar gira la cámara. Mientras tanto el
 // objetivo queda fijo en pantalla, así el hoyo sigue en la misma dirección relativa.
-// En pantallas táctiles el dedo siempre maneja el hoyo.
+// En el celular el joystick mueve al personaje y arrastrar el resto de la pantalla gira la cámara.
+const coarsePointer = window.matchMedia("(pointer: coarse), (hover: none)");
+const desktopHint = hint.textContent;
 let turnFrom = null;
 
+function matchActive() {
+  return cityExplore.hidden && menu.hidden && end.hidden && !hud.hidden;
+}
+
 window.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "mouse" || event.button !== 0 || !cityExplore.hidden || !menu.hidden || !end.hidden) return;
+  if (!matchActive()) return;
+  if (event.target.closest("#joystick, button, a, input, select, textarea")) return;
+  const mouseTurn = event.pointerType === "mouse" && event.button === 0;
+  const touchTurn = coarsePointer.matches && event.pointerType !== "mouse";
+  if (!mouseTurn && !touchTurn) return;
   turnFrom = event.clientX;
   document.body.classList.add("turning");
 });
 
 window.addEventListener("pointermove", (event) => {
-  if (!cityExplore.hidden || !menu.hidden || !end.hidden) return;
+  if (!matchActive()) return;
   if (turnFrom !== null) {
     game.rotateCamera(-(event.clientX - turnFrom) * 0.006);
     turnFrom = event.clientX;
     return;
   }
+  if (coarsePointer.matches) return;
   game.setPointer(event.clientX, event.clientY);
 });
 
@@ -441,6 +452,80 @@ game.onPlayerDeath = () => {
   if (partyController.active) partyController.leave({ showMenu: false });
   showMainMenu("Te tragaron. Elegí tu nombre y volvé a la ciudad.");
 };
+
+const joystick = document.querySelector("#joystick");
+const joystickBase = joystick.querySelector(".joystick-base");
+const joystickKnob = joystick.querySelector(".joystick-knob");
+const exploreEditor = document.querySelector("#explore-editor");
+const exploreDirectory = document.querySelector("#explore-directory");
+let stickPointer = null;
+
+function releaseStick() {
+  stickPointer = null;
+  joystickKnob.style.transform = "translate(-50%, -50%)";
+  game.setStick(0, 0);
+}
+
+function syncJoystick() {
+  const exploring = !cityExplore.hidden && exploreEditor.hidden && exploreDirectory.hidden;
+  const show = coarsePointer.matches && (matchActive() || exploring);
+  if (!show) releaseStick();
+  joystick.hidden = !show;
+  joystick.setAttribute("aria-hidden", show ? "false" : "true");
+  hint.textContent = coarsePointer.matches
+    ? "Joystick para moverte · arrastrá para girar la cámara"
+    : desktopHint;
+}
+
+function moveStick(event) {
+  const rect = joystickBase.getBoundingClientRect();
+  const dx = event.clientX - (rect.left + rect.width / 2);
+  const dy = event.clientY - (rect.top + rect.height / 2);
+  const max = rect.width * 0.34;
+  const dist = Math.hypot(dx, dy);
+  const clamped = Math.min(dist, max);
+  const nx = dist > 0 ? dx / dist : 0;
+  const ny = dist > 0 ? dy / dist : 0;
+  joystickKnob.style.transform = `translate(calc(-50% + ${nx * clamped}px), calc(-50% + ${ny * clamped}px))`;
+  const magnitude = max > 0 ? dist / max : 0;
+  if (magnitude < 0.18) {
+    game.setStick(0, 0);
+    return;
+  }
+  const gain = Math.min(1, (magnitude - 0.18) / 0.82);
+  game.setStick(nx * gain, -ny * gain);
+}
+
+joystick.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  stickPointer = event.pointerId;
+  try {
+    joystick.setPointerCapture(event.pointerId);
+  } catch {
+    // El gesto sigue valiendo si el navegador no permite capturar el puntero.
+  }
+  moveStick(event);
+});
+joystick.addEventListener("pointermove", (event) => {
+  if (event.pointerId !== stickPointer) return;
+  event.preventDefault();
+  moveStick(event);
+});
+function endStick(event) {
+  if (event.pointerId !== stickPointer) return;
+  releaseStick();
+}
+joystick.addEventListener("pointerup", endStick);
+joystick.addEventListener("pointercancel", endStick);
+joystick.addEventListener("lostpointercapture", endStick);
+
+const joystickWatch = new MutationObserver(syncJoystick);
+for (const node of [hud, menu, end, cityExplore, exploreEditor, exploreDirectory]) {
+  joystickWatch.observe(node, { attributes: true, attributeFilter: ["hidden"] });
+}
+coarsePointer.addEventListener("change", syncJoystick);
+syncJoystick();
 
 function showMainMenu(message) {
   hud.hidden = true;

@@ -701,6 +701,9 @@ export async function mountGame(canvas, hooks) {
   let player = null;
   const pointer = new THREE.Vector2();
   let pointerReady = false;
+  let stickX = 0;
+  let stickY = 0;
+  let stickActive = false;
   const aimRay = new THREE.Raycaster();
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const aimPoint = new THREE.Vector3();
@@ -1145,6 +1148,10 @@ export async function mountGame(canvas, hooks) {
     let forward = 0;
     let side = 0;
     if (!exploreFocused && !exploreReturning) {
+      if (stickActive) {
+        forward += stickY;
+        side += stickX;
+      }
       if (exploreKeys.has("KeyW")) forward += 1;
       if (exploreKeys.has("KeyS")) forward -= 1;
       if (exploreKeys.has("KeyD")) side += 1;
@@ -1487,17 +1494,26 @@ export async function mountGame(canvas, hooks) {
       let ix = 0;
       let iz = 0;
       if (hole.player) {
-        const aim = groundAim();
-        if (aim) {
-          const dx = aim.x - hole.x;
-          const dz = aim.z - hole.z;
-          const dist = Math.hypot(dx, dz);
-          const stop = 0.4 + hole.radius * 0.12;
-          const full = 3.1 + hole.radius * 0.65;
-          const gain = THREE.MathUtils.smoothstep(dist, stop, full);
-          if (dist > 0.001) {
-            ix = (dx / dist) * gain;
-            iz = (dz / dist) * gain;
+        if (stickActive) {
+          const forwardX = -Math.sin(camYaw);
+          const forwardZ = -Math.cos(camYaw);
+          const rightX = Math.cos(camYaw);
+          const rightZ = -Math.sin(camYaw);
+          ix = rightX * stickX + forwardX * stickY;
+          iz = rightZ * stickX + forwardZ * stickY;
+        } else {
+          const aim = groundAim();
+          if (aim) {
+            const dx = aim.x - hole.x;
+            const dz = aim.z - hole.z;
+            const dist = Math.hypot(dx, dz);
+            const stop = 0.4 + hole.radius * 0.12;
+            const full = 3.1 + hole.radius * 0.65;
+            const gain = THREE.MathUtils.smoothstep(dist, stop, full);
+            if (dist > 0.001) {
+              ix = (dx / dist) * gain;
+              iz = (dz / dist) * gain;
+            }
           }
         }
       } else {
@@ -2372,6 +2388,11 @@ export async function mountGame(canvas, hooks) {
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       pointerReady = true;
+    },
+    setStick(x, y) {
+      stickX = x;
+      stickY = y;
+      stickActive = x !== 0 || y !== 0;
     },
     rotateCamera(radians) {
       camYawGoal += radians;

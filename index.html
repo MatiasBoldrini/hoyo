@@ -130,8 +130,9 @@
       </header>
 
       <div id="explore-help" class="explore-help">
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> moverte</span>
-        <span><b>Mouse</b> para mirar · <b>arrastrá</b> para girar</span>
+        <span class="help-desktop"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> moverte</span>
+        <span class="help-desktop"><b>Mouse</b> para mirar · <b>arrastrá</b> para girar</span>
+        <span class="help-mobile">Joystick para moverte</span>
         <span><kbd>/</kbd> sponsors</span>
         <span><b>Clic</b> para elegir un soporte</span>
         <button id="explore-help-close" type="button" aria-label="Ocultar ayuda">×</button>
@@ -263,6 +264,12 @@
       <ol id="final"></ol>
       <button id="again" type="button">OTRA VEZ</button>
     </section>
+
+    <div id="joystick" class="joystick" hidden aria-hidden="true">
+      <div class="joystick-base">
+        <div class="joystick-knob"></div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

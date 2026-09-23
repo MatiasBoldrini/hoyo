@@ -2028,6 +2028,10 @@ h2 {
   gap: 4px;
 }
 
+.explore-help .help-mobile {
+  display: none;
+}
+
 .explore-help kbd {
   min-width: 21px;
   border: 1px solid rgba(255, 255, 255, 0.35);
@@ -3059,5 +3063,66 @@ h2 {
 
   .listing-footer {
     padding: 12px 18px 14px;
+  }
+}
+
+.joystick {
+  position: fixed;
+  left: calc(16px + env(safe-area-inset-left));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 14;
+  width: 128px;
+  height: 128px;
+  touch-action: none;
+}
+
+.joystick-base {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.62);
+  background: rgba(20, 24, 32, 0.36);
+  box-shadow:
+    inset 0 0 0 12px rgba(255, 255, 255, 0.08),
+    0 12px 28px rgba(16, 24, 40, 0.28);
+  backdrop-filter: blur(8px);
+}
+
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 3px solid #1b2030;
+  background: radial-gradient(circle at 35% 30%, #fff6a8, var(--yellow) 46%, #d7a400);
+  box-shadow: 0 6px 0 rgba(27, 32, 48, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+@media (pointer: coarse), (hover: none) {
+  .explore-help .help-desktop {
+    display: none;
+  }
+
+  .explore-help .help-mobile {
+    display: flex;
+  }
+
+  .explore-help {
+    left: calc(156px + env(safe-area-inset-left));
+    right: auto;
+    bottom: calc(52px + env(safe-area-inset-bottom));
+    width: max-content;
+    max-width: calc(100vw - 180px - env(safe-area-inset-left));
+    transform: none;
+    white-space: nowrap;
+  }
+
+  .explore-help > span:not(.help-mobile) {
+    display: none;
   }
 }
