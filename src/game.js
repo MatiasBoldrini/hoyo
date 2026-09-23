@@ -370,12 +370,11 @@ function buildMarketInventory(objects) {
       category,
       kind: object.kind,
       name: catalogNames.get(id) || assetName(object.kind, index),
-      description:
-        category === "building"
-          ? "Tu identidad en la fachada de uno de los edificios que protagonizan la ciudad."
-          : medallion
-            ? "Una insignia integrada al frente de una fuente en un punto de encuentro de la ciudad."
-            : "Una aplicación de marca integrada al frente de un kiosco urbano.",
+      description: category === "building"
+        ? ""
+        : medallion
+          ? "Una insignia integrada al frente de una fuente en un punto de encuentro de la ciudad."
+          : "Una aplicación de marca integrada al frente de un kiosco urbano.",
       zone,
       reach: Math.hypot(object.x, object.z) < 72 ? "Alta" : "Media",
       price: marketPrice(category, object.x, object.z, object.kind),
@@ -498,6 +497,76 @@ function disposeBrandSurface(surface) {
   surface.userData.surfaceGeometry.dispose();
   surface.userData.surfaceMaterial.map?.dispose();
   surface.userData.surfaceMaterial.dispose();
+}
+
+function normalizeSurface(value) {
+  const color = String(value || "").toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+// El volumen principal (pared, cuerpo del kiosco, piedra de la fuente) es el color
+// con más área. Vidrios, techos y detalles quedan como están.
+function bodyColorOf(geometry) {
+  const position = geometry.getAttribute("position");
+  const color = geometry.getAttribute("color");
+  if (!position || !color || position.count < 3) return null;
+  const areaByColor = new Map();
+  let bestKey = "";
+  let bestArea = -1;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  for (let i = 0; i + 2 < position.count; i += 3) {
+    a.fromBufferAttribute(position, i);
+    b.fromBufferAttribute(position, i + 1);
+    c.fromBufferAttribute(position, i + 2);
+    b.sub(a);
+    c.sub(a);
+    const area = b.cross(c).length() * 0.5;
+    const key = `${color.getX(i).toFixed(4)}:${color.getY(i).toFixed(4)}:${color.getZ(i).toFixed(4)}`;
+    const total = (areaByColor.get(key) || 0) + area;
+    areaByColor.set(key, total);
+    if (total > bestArea) {
+      bestArea = total;
+      bestKey = key;
+    }
+  }
+  const [r, g, bChannel] = bestKey.split(":").map(Number);
+  return { r, g, b: bChannel };
+}
+
+function paintBody(mesh, hex) {
+  const source = mesh.userData.bodySource || mesh.geometry;
+  const sourceColor = source.getAttribute("color");
+  if (!sourceColor) return false;
+  if (!mesh.userData.bodySource) mesh.userData.bodySource = source;
+  if (!mesh.userData.bodyRgb) mesh.userData.bodyRgb = bodyColorOf(source);
+  const body = mesh.userData.bodyRgb;
+  if (!body) return false;
+  let tinted = mesh.userData.bodyGeometry;
+  if (!tinted) {
+    tinted = source.clone();
+    const count = tinted.getAttribute("position").count;
+    tinted.setAttribute("aFade", new THREE.BufferAttribute(new Float32Array(count).fill(1), 1));
+    mesh.userData.bodyGeometry = tinted;
+  }
+  const next = tinted.getAttribute("color");
+  const paint = new THREE.Color(hex);
+  for (let i = 0; i < sourceColor.count; i++) {
+    const dr = sourceColor.getX(i) - body.r;
+    const dg = sourceColor.getY(i) - body.g;
+    const db = sourceColor.getZ(i) - body.b;
+    if (dr * dr + dg * dg + db * db < 0.0004) next.setXYZ(i, paint.r, paint.g, paint.b);
+    else next.setXYZ(i, sourceColor.getX(i), sourceColor.getY(i), sourceColor.getZ(i));
+  }
+  next.needsUpdate = true;
+  mesh.geometry = tinted;
+  return true;
+}
+
+function restoreBody(mesh) {
+  const source = mesh.userData.bodySource;
+  if (source && mesh.geometry !== source) mesh.geometry = source;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -655,7 +724,7 @@ export async function mountGame(canvas, hooks) {
     samples: [],
   };
   renderer.setPixelRatio(res.ratio);
-  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.setSize(1, 1, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.08;
@@ -854,6 +923,41 @@ export async function mountGame(canvas, hooks) {
     });
     brandMarkers.set(item.id, marker);
     scene.add(marker);
+    if (applySurfaceColor(item, record.design?.surface)) surfacedIds.add(item.id);
+  }
+
+  const surfacedIds = new Set();
+
+  function showSoloMesh(obj) {
+    obj.solo = true;
+    obj.soloScene = scene;
+    if (obj.batch) obj.batch.dirty = true;
+    if (obj.state !== "idle") return;
+    obj.mesh.visible = true;
+    obj.mesh.position.set(obj.x, 0, obj.z);
+    obj.mesh.rotation.set(0, obj.yaw, 0);
+    obj.mesh.updateMatrix();
+    if (!obj.mesh.parent) scene.add(obj.mesh);
+  }
+
+  function hideSoloMesh(obj) {
+    obj.solo = false;
+    if (obj.mesh.parent) obj.mesh.parent.remove(obj.mesh);
+    restoreBody(obj.mesh);
+    if (obj.batch) obj.batch.dirty = true;
+  }
+
+  function applySurfaceColor(item, surface) {
+    const obj = item?.target;
+    if (!obj?.mesh) return false;
+    const color = normalizeSurface(surface);
+    if (!color) {
+      if (obj.solo) hideSoloMesh(obj);
+      return false;
+    }
+    if (!paintBody(obj.mesh, color)) return false;
+    showSoloMesh(obj);
+    return true;
   }
 
   function setBrandings(records) {
@@ -862,7 +966,11 @@ export async function mountGame(canvas, hooks) {
       disposeBrandSurface(marker);
     }
     brandMarkers.clear();
+    surfacedIds.clear();
     for (const record of records) setBranding(record);
+    for (const item of marketItems) {
+      if (!surfacedIds.has(item.id) && item.target?.solo) hideSoloMesh(item.target);
+    }
     updateBrandMarkers();
   }
 
@@ -938,6 +1046,7 @@ export async function mountGame(canvas, hooks) {
     camYawGoal = 0;
     followCamera(0, true);
     followSun(true);
+    startRendering();
   }
 
   function networkState() {
@@ -1010,10 +1119,11 @@ export async function mountGame(canvas, hooks) {
   }
 
   function returnToMenu() {
-    if (phase !== "play") return;
+    if (phase !== "play" && phase !== "end") return;
     phase = "menu";
     for (const hole of holes) hole.group.visible = false;
     for (const value of holeXZR) value.set(0, 0, 0);
+    stopRendering();
   }
 
   function beginExplore() {
@@ -1040,11 +1150,13 @@ export async function mountGame(canvas, hooks) {
     scene.fog.far = 380;
     enableShadows();
     followSun(true);
+    startRendering();
   }
 
   function endExplore() {
     if (phase !== "explore") return;
     phase = "menu";
+    stopRendering();
     scene.fog.near = 70;
     scene.fog.far = 210;
     exploreKeys.clear();
@@ -2371,13 +2483,44 @@ export async function mountGame(canvas, hooks) {
         rivals: rivalMarks(),
       });
     }
-    requestAnimationFrame(frameWrapped);
+  }
+
+  let frameHandle = 0;
+
+  function presentSurface() {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  }
+
+  function scheduleFrame() {
+    frameHandle = requestAnimationFrame(() => {
+      frameWrapped();
+      if (phase === "play" || phase === "explore") scheduleFrame();
+      else frameHandle = 0;
+    });
+  }
+
+  function startRendering() {
+    if (frameHandle) return;
+    presentSurface();
+    clock.getDelta();
+    frameWrapped();
+    if (phase === "play" || phase === "explore") scheduleFrame();
+  }
+
+  function stopRendering() {
+    if (frameHandle) cancelAnimationFrame(frameHandle);
+    frameHandle = 0;
+    renderer.setSize(1, 1, false);
   }
 
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    if (phase === "play" || phase === "explore") {
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+    }
   }
   window.addEventListener("resize", onResize);
 
@@ -2463,6 +2606,7 @@ export async function mountGame(canvas, hooks) {
       camYawGoal += radians;
     },
     syncNetworkState,
+    sleep: stopRendering,
     onPlayerDeath: null,
     onEnd: null,
     destroy() {
@@ -2471,7 +2615,6 @@ export async function mountGame(canvas, hooks) {
   };
   mountGame._api = api;
   hooks.onReady();
-  requestAnimationFrame(frameWrapped);
   return api;
 }
 
@@ -2508,6 +2651,10 @@ function resetObj(obj) {
   obj.mesh.scale.setScalar(1);
   obj.mesh.position.set(obj.x, 0, obj.z);
   obj.mesh.rotation.set(0, obj.homeYaw, 0);
+  if (obj.solo && obj.soloScene) {
+    obj.mesh.updateMatrix();
+    obj.soloScene.add(obj.mesh);
+  }
   if (obj.motion) {
     obj.motion.dir = obj.homeDir;
     obj.motion.ready = false;
@@ -2593,7 +2740,7 @@ function packBatch(rec, eye) {
   packedItems.length = 0;
   let n = 0;
   for (const obj of items) {
-    if (obj.state === "falling" || obj.state === "gone") continue;
+    if (obj.solo || obj.state === "falling" || obj.state === "gone") continue;
     if (obj.motion) obj.inView = inView(obj, eye);
     if (!obj.inView) continue;
     mesh.setMatrixAt(n, obj.mesh.matrix);

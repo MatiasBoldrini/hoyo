@@ -31,6 +31,21 @@ canvas {
   height: 100%;
 }
 
+#home-poster {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  background: #8ec8f8;
+}
+
+body.is-live #home-poster {
+  display: none;
+}
+
 body.turning,
 body.turning canvas {
   cursor: grabbing;
@@ -340,6 +355,13 @@ h2 {
 #again:active {
   transform: translateY(2px);
   box-shadow: 0 4px 0 #e0b000;
+}
+
+#play:disabled,
+#open-party:disabled,
+#open-explore:disabled {
+  opacity: 0.55;
+  cursor: progress;
 }
 
 .explore-entry {
@@ -2209,6 +2231,10 @@ h2 {
   letter-spacing: -0.035em;
 }
 
+.listing-status[hidden] {
+  display: none;
+}
+
 .listing-status {
   grid-column: 1 / -1;
   display: flex;
@@ -2452,6 +2478,12 @@ h2 {
     inset 0 0 0 1px rgba(0, 0, 0, 0.12),
     0 0 0 2px var(--paper),
     0 0 0 3.5px var(--text);
+}
+
+.brand-swatch-original {
+  background:
+    linear-gradient(135deg, transparent 46%, #b7b1a8 46%, #b7b1a8 54%, transparent 54%),
+    #f4f1ea;
 }
 
 .brand-swatch-custom {

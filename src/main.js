@@ -97,6 +97,9 @@ window.addEventListener("resize", () => {
 const game = await mountGame(canvas, {
   onReady() {
     loading.hidden = true;
+    play.disabled = false;
+    openParty.disabled = false;
+    document.querySelector("#open-explore").disabled = false;
   },
   onFrame(state) {
     paintHud(state);
@@ -377,6 +380,7 @@ function begin(options = {}) {
   hint.classList.remove("hide");
   setTimeout(() => hint.classList.add("hide"), 4200);
   game.start(name, color, options);
+  document.body.classList.add("is-live");
 }
 
 play.addEventListener("click", () => begin());
@@ -542,6 +546,8 @@ function showMainMenu(message) {
   end.hidden = true;
   menu.hidden = false;
   toast.hidden = true;
+  document.body.classList.remove("is-live");
+  game.sleep();
   stopTurning();
   menuMessage.textContent = message;
   menuMessage.hidden = false;

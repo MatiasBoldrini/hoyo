@@ -1,11 +1,12 @@
 import { sponsorDomain } from "./sponsor-domain.js";
 
 const BRAND_COLORS = ["#2257e6", "#f05a35", "#111827", "#16a06d", "#8b5cf6", "#eab308"];
+const PLACE_COLORS = ["#f6efe2", "#e8c39a", "#d06a45", "#8ea4ae", "#6e947c", "#4d6270", "#e2b43a"];
 const STORAGE_KEY = "hoyo-market-places-v2";
 const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const DEFAULT_DESIGN = { x: 0.5, y: 0.5, scale: 0.46, rotation: 0 };
 const SYNC_COPY = {
-  online: "Tu marca aparece para todos los jugadores al instante.",
+  online: "",
   offline: "Sólo lectura: se necesita conexión segura para publicar.",
   local: "Sin conexión con la ciudad: se guarda solo en este navegador.",
 };
@@ -55,6 +56,18 @@ function normalizeDesign(design) {
     scale: clamp(design?.scale, 0.18, 0.82, DEFAULT_DESIGN.scale),
     rotation: clamp(design?.rotation, -45, 45, DEFAULT_DESIGN.rotation),
   };
+}
+
+function readSurface(design) {
+  const color = String(design?.surface || "").toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : "";
+}
+
+function publishedDesign(design, surface) {
+  const next = { ...design };
+  delete next.surface;
+  if (surface) next.surface = surface;
+  return next;
 }
 
 function sameDesign(a, b) {
@@ -159,6 +172,8 @@ export async function mountCityExplore(game) {
   const brandUrl = $("#brand-url");
   const colors = $("#brand-colors");
   const colorValue = $("#brand-color-value");
+  const placeColors = $("#place-colors");
+  const placeColorValue = $("#place-color-value");
   const releaseButton = $("#listing-release");
 
   const formError = $("#explore-form-error");
@@ -218,6 +233,7 @@ export async function mountCityExplore(game) {
       logo: record?.logo || "",
       logoPath: record?.logoPath || "",
       color: (record?.color || BRAND_COLORS[0]).toLowerCase(),
+      surface: readSurface(record?.design),
       design: normalizeDesign(record?.design),
     };
   }
@@ -231,7 +247,7 @@ export async function mountCityExplore(game) {
       logoPath: draft.logoPath,
       color: draft.color,
       animation: "fixed",
-      design: { ...draft.design },
+      design: publishedDesign(draft.design, draft.surface),
       mine: true,
     };
   }
@@ -245,17 +261,23 @@ export async function mountCityExplore(game) {
       safeUrl(draft.url) !== saved.url ||
       draft.logo !== saved.logo ||
       draft.color !== saved.color ||
+      draft.surface !== saved.surface ||
       !sameDesign(draft.design, saved.design)
     );
   }
 
+  function setSyncLine(message, tone) {
+    syncLine.textContent = message;
+    syncLine.hidden = !message;
+    if (tone) syncLine.dataset.tone = tone;
+    else delete syncLine.dataset.tone;
+  }
+
   function flash(message, tone = "success") {
     clearTimeout(flashTimer);
-    syncLine.textContent = message;
-    syncLine.dataset.tone = tone;
+    setSyncLine(message, tone);
     flashTimer = window.setTimeout(() => {
-      syncLine.textContent = store ? SYNC_COPY.online : SYNC_COPY.offline;
-      delete syncLine.dataset.tone;
+      setSyncLine(store ? SYNC_COPY.online : SYNC_COPY.offline);
     }, 2800);
   }
 
@@ -306,19 +328,74 @@ export async function mountCityExplore(game) {
     renderDraft();
   }
 
+  function renderPlaceColors() {
+    placeColors.replaceChildren();
+    const current = draft.surface;
+    const original = document.createElement("button");
+    original.type = "button";
+    original.className = "brand-swatch brand-swatch-original";
+    original.setAttribute("role", "radio");
+    original.setAttribute("aria-checked", String(!current));
+    original.setAttribute("aria-label", "Color original del lugar");
+    original.title = "Color original";
+    original.addEventListener("click", () => setSurface(""));
+    placeColors.append(original);
+    for (const color of PLACE_COLORS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "brand-swatch";
+      button.style.setProperty("--swatch", color);
+      button.setAttribute("role", "radio");
+      button.setAttribute("aria-checked", String(color === current));
+      button.setAttribute("aria-label", `Color del lugar ${color.toUpperCase()}`);
+      button.addEventListener("click", () => setSurface(color));
+      placeColors.append(button);
+    }
+    const custom = Boolean(current) && !PLACE_COLORS.includes(current);
+    const picker = document.createElement("label");
+    picker.className = `brand-swatch brand-swatch-custom${custom ? " is-set" : ""}`;
+    picker.style.setProperty("--swatch", current || PLACE_COLORS[0]);
+    picker.setAttribute("aria-checked", String(custom));
+    picker.title = "Elegir otro color para el lugar";
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = current || PLACE_COLORS[0];
+    input.setAttribute("aria-label", "Elegir otro color para el lugar");
+    input.addEventListener("input", () => setSurface(input.value, { rerender: false }));
+    input.addEventListener("change", () => renderPlaceColors());
+    picker.append(input);
+    placeColors.append(picker);
+  }
+
+  function setSurface(color, { rerender = true } = {}) {
+    draft.surface = readSurface({ surface: color });
+    if (rerender) renderPlaceColors();
+    else {
+      const picker = placeColors.querySelector(".brand-swatch-custom");
+      picker.style.setProperty("--swatch", draft.surface);
+      picker.classList.add("is-set");
+      picker.setAttribute("aria-checked", "true");
+      for (const button of placeColors.querySelectorAll("button.brand-swatch")) {
+        button.setAttribute("aria-checked", "false");
+      }
+    }
+    renderDraft();
+  }
+
   function paintDesignerSurface() {
     const { width, height } = designCanvas;
     const kind = selected?.kind || "building";
     designContext.clearRect(0, 0, width, height);
 
     if (kind === "fountain") {
+      const stone = draft.surface || "#ded8ca";
       designContext.fillStyle = "#84c95d";
       designContext.fillRect(0, 0, width, height);
       const gradient = designContext.createRadialGradient(width / 2, height * 0.56, 12, width / 2, height * 0.56, height * 0.48);
       gradient.addColorStop(0, "#a7e8f3");
       gradient.addColorStop(0.5, "#64bfd6");
-      gradient.addColorStop(0.52, "#ded8ca");
-      gradient.addColorStop(0.76, "#9d978c");
+      gradient.addColorStop(0.52, stone);
+      gradient.addColorStop(0.76, stone);
       gradient.addColorStop(0.78, "#6f756f");
       gradient.addColorStop(1, "#56605b");
       designContext.fillStyle = gradient;
@@ -326,7 +403,8 @@ export async function mountCityExplore(game) {
       return;
     }
 
-    designContext.fillStyle = kind === "kiosk" ? "#9b7757" : kind === "shop" ? "#b8aaa0" : "#98a49c";
+    const fallback = kind === "kiosk" ? "#9b7757" : kind === "shop" ? "#b8aaa0" : "#98a49c";
+    designContext.fillStyle = draft.surface || fallback;
     designContext.fillRect(0, 0, width, height);
     designContext.fillStyle = "rgba(255,255,255,.13)";
     designContext.fillRect(width * 0.495, 0, width * 0.012, height);
@@ -419,6 +497,7 @@ export async function mountCityExplore(game) {
     logoRemove.hidden = !draft.logo;
     brandNameCount.textContent = `${draft.company.length}/24`;
     colorValue.textContent = draft.color.toUpperCase();
+    placeColorValue.textContent = draft.surface ? draft.surface.toUpperCase() : "Original";
     syncDesignerImage();
     drawDesigner();
     if (!saving) {
@@ -436,8 +515,10 @@ export async function mountCityExplore(game) {
     panel.dataset.state = state;
     listingTitle.textContent = item.name;
     listingDescription.textContent = item.description || "";
-    listingStatus.textContent =
-      state === "mine" ? "Es tuyo" : state === "taken" ? `Reservado por ${record.company}` : "Disponible";
+    listingDescription.hidden = !item.description;
+    const statusText = state === "mine" ? "Es tuyo" : state === "taken" ? `Reservado por ${record.company}` : "";
+    listingStatus.textContent = statusText;
+    listingStatus.parentElement.hidden = !statusText;
     panel.style.setProperty("--brand", record?.color || "#2f9e6b");
     designHint.textContent =
       item.placement === "medallion"
@@ -474,14 +555,16 @@ export async function mountCityExplore(game) {
       checkoutPrice.textContent = claimAvailable === true ? priceFormat.format(0) : "Precio al confirmar";
       saveButton.textContent = claimAvailable === true ? "Reclamar gratis" : "Reservar espacio";
     }
-    claimStatus.textContent =
+    const claimCopy =
       claimAvailable === true
         ? "Tu claim gratis vitalicio está disponible."
         : claimAvailable === false
           ? "Ya usaste tu claim gratis vitalicio. El servidor calculará el precio."
           : currentSession?.user && !currentSession.user.is_anonymous
             ? "El servidor confirmará elegibilidad y precio antes del checkout."
-            : "Iniciá sesión para consultar si conservás tu claim gratis vitalicio.";
+            : "";
+    claimStatus.textContent = claimCopy;
+    claimStatus.hidden = !claimCopy;
     saveButton.disabled = false;
   }
 
@@ -499,6 +582,7 @@ export async function mountCityExplore(game) {
     showError("");
     syncDesignControls();
     renderColors();
+    renderPlaceColors();
     drawDesigner();
   }
 
@@ -631,6 +715,7 @@ export async function mountCityExplore(game) {
     help.hidden = false;
     notice.classList.remove("hidden");
     game.beginExplore();
+    document.body.classList.add("is-live");
     canvas.focus();
   }
 
@@ -641,6 +726,7 @@ export async function mountCityExplore(game) {
     game.clearExploreHover();
     root.hidden = true;
     menu.hidden = false;
+    document.body.classList.remove("is-live");
     game.endExplore();
   }
 
@@ -966,7 +1052,7 @@ export async function mountCityExplore(game) {
       if (!wasMine) {
         const checkoutUrl = await store.acquire(record, selected, previous);
         if (checkoutUrl) {
-          syncLine.textContent = "Redirigiendo al checkout seguro…";
+          setSyncLine("Redirigiendo al checkout seguro…");
           window.location.assign(checkoutUrl);
           return;
         }
@@ -993,18 +1079,18 @@ export async function mountCityExplore(game) {
     }
   });
 
-  syncLine.textContent = SYNC_COPY.offline;
+  setSyncLine(SYNC_COPY.offline);
   renderDirectory();
   try {
     const { connectSponsorStore, sponsorStoreEnabled } = await import("./sponsor-store.js");
     if (!sponsorStoreEnabled) {
-      syncLine.textContent = SYNC_COPY.local;
+      setSyncLine(SYNC_COPY.local);
       return;
     }
     store = await connectSponsorStore();
     renderSession(await store.getSession());
     await syncRecords();
-    syncLine.textContent = SYNC_COPY.online;
+    setSyncLine(SYNC_COPY.online);
     store.onAuthChange((nextSession) => {
       renderSession(nextSession);
       syncRecords().catch(() => {});
@@ -1015,7 +1101,7 @@ export async function mountCityExplore(game) {
   } catch (error) {
     console.warn("Supabase no disponible; usando modo local", error);
     store = null;
-    syncLine.textContent = SYNC_COPY.local;
+    setSyncLine(SYNC_COPY.local);
   }
 
   const checkoutReturn = new URLSearchParams(location.search).get("checkout");

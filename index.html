@@ -10,10 +10,11 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <canvas id="view"></canvas>
+    <canvas id="view" width="1" height="1"></canvas>
+    <img id="home-poster" src="/home.webp" alt="" width="1920" height="1080" fetchpriority="high" decoding="async" />
     <div id="danger"></div>
 
-    <div id="loading">Armando la ciudad…</div>
+    <div id="loading" hidden>Armando la ciudad…</div>
 
     <header id="hud" hidden>
       <div id="timer">2:00</div>
@@ -44,12 +45,12 @@
           </div>
         </div>
       </div>
-      <button id="play" type="button">JUGAR</button>
-      <button id="open-party" class="party-entry" type="button">
+      <button id="play" type="button" disabled>JUGAR</button>
+      <button id="open-party" class="party-entry" type="button" disabled>
         <span aria-hidden="true">🎉</span>
         <span><b>MODO PARTY</b><small>Creá una sala e invitá a tus amigos</small></span>
       </button>
-      <button id="open-explore" class="explore-entry" type="button">
+      <button id="open-explore" class="explore-entry" type="button" disabled>
         <span class="explore-entry-icon" aria-hidden="true">◆</span>
         <span><b>EXPLORÁ Y PERSONALIZÁ</b><small>Recorré la ciudad 3D y elegí un espacio disponible</small></span>
         <em>NUEVO</em>
@@ -169,10 +170,10 @@
             <button id="explore-editor-close" class="listing-close" type="button" aria-label="Cerrar">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" /></svg>
             </button>
-            <p class="listing-status"><i></i><span id="listing-status">Disponible</span></p>
+            <p class="listing-status" hidden><i></i><span id="listing-status"></span></p>
           </header>
 
-          <p id="listing-description" class="listing-description"></p>
+          <p id="listing-description" class="listing-description" hidden></p>
 
           <section id="listing-owner" class="listing-owner" hidden>
             <p class="listing-section-title">Marca actual</p>
@@ -218,7 +219,6 @@
               </label>
               <div class="logo-meta">
                 <b>Logo</b>
-                <small>PNG, JPG o WebP de hasta 1 MB. Si no subís uno, usamos tus iniciales.</small>
                 <div class="logo-actions">
                   <label for="brand-logo" class="text-button">Subir imagen</label>
                   <button id="brand-logo-remove" class="text-button muted" type="button" hidden>Quitar</button>
@@ -238,8 +238,13 @@
             </label>
 
             <div class="listing-field">
-              <span class="listing-label">Color <small id="brand-color-value">#2257E6</small></span>
+              <span class="listing-label">Color de la marca <small id="brand-color-value">#2257E6</small></span>
               <div id="brand-colors" class="brand-swatches" role="radiogroup" aria-label="Color de marca"></div>
+            </div>
+
+            <div class="listing-field">
+              <span class="listing-label">Color del lugar <small id="place-color-value">Original</small></span>
+              <div id="place-colors" class="brand-swatches" role="radiogroup" aria-label="Color del edificio, local o kiosco"></div>
             </div>
 
             <button id="listing-release" class="release-button" type="button" hidden>Liberar este espacio</button>
@@ -252,10 +257,8 @@
             <p class="checkout-total"><small id="checkout-label">Precio</small><b id="checkout-price">US$ 0</b></p>
             <button id="explore-save" class="checkout-button" type="submit" form="explore-form">Reservar espacio</button>
           </div>
-          <p id="claim-status" class="claim-status" aria-live="polite">
-            Iniciá sesión para consultar si conservás tu claim gratis vitalicio.
-          </p>
-          <p id="listing-sync" class="listing-sync">Tu marca aparece para todos los jugadores al instante.</p>
+          <p id="claim-status" class="claim-status" aria-live="polite" hidden></p>
+          <p id="listing-sync" class="listing-sync" hidden></p>
         </footer>
       </aside>
     </section>
