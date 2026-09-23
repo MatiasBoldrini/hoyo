@@ -58,6 +58,10 @@
       <header class="explore-topbar">
         <button id="explore-close" class="explore-close" type="button" aria-label="Volver al menú">←</button>
         <div class="explore-brand"><span>H</span><p><b>HOYO CIUDAD</b><small>Modo exploración</small></p></div>
+        <div class="explore-account">
+          <span id="explore-session" aria-live="polite">Sin sesión</span>
+          <button id="explore-logout" type="button" hidden>Cerrar sesión</button>
+        </div>
         <div class="explore-connection"><i></i><span id="explore-connection-text">Conectando…</span></div>
       </header>
 
@@ -83,6 +87,17 @@
         <a id="editor-brand-link" class="editor-brand-link" href="" target="_blank" rel="noopener noreferrer" hidden>
           Visitar sitio de la marca ↗
         </a>
+        <p id="editor-price" class="editor-price" hidden></p>
+
+        <form id="explore-auth-form" class="explore-auth" hidden>
+          <p><b>Guardá tu identidad</b><small>Te enviaremos un Magic Link. Iniciá sesión antes de reclamar o pagar.</small></p>
+          <label class="editor-field">
+            <span>Email</span>
+            <input id="explore-auth-email" type="email" autocomplete="email" required placeholder="vos@empresa.com" />
+          </label>
+          <button id="explore-auth-send" class="editor-save" type="submit">Enviar Magic Link</button>
+          <p id="explore-auth-status" class="editor-status" role="status" aria-live="polite"></p>
+        </form>
 
         <form id="explore-form" novalidate>
           <div class="editor-live-preview" id="editor-live-preview">
@@ -121,9 +136,10 @@
             <label><input type="radio" name="brand-animation" value="fixed" /><span>Fijo<small>Más realista</small></span></label>
           </fieldset>
 
-          <p id="explore-form-error" class="editor-error" hidden></p>
+          <p id="explore-form-error" class="editor-error" role="alert" hidden></p>
           <button id="explore-save" class="editor-save" type="submit">Guardar en la ciudad</button>
-          <p class="editor-footnote">La personalización se actualiza para todos en tiempo real.</p>
+          <p id="explore-form-status" class="editor-status" role="status" aria-live="polite"></p>
+          <p class="editor-footnote">Los cambios se publican únicamente cuando el servidor los confirma.</p>
         </form>
       </aside>
     </section>

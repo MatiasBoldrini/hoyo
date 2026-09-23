@@ -1,0 +1,79 @@
+# Secure claims and takeover data contract
+
+Migration `20260923130000_secure_claims_commerce.sql` makes the database the
+authority for catalog, ownership, prices, reservations and payment completion.
+
+## Catalog contract
+
+`market_assets.id` is the immutable ID shared by the world and backend. The
+current `asset-N` IDs depend on array order and therefore are not safe to seed
+as permanent server identifiers. Before production, export the complete
+`game.getCityItems()` inventory, replace positional IDs with stable world IDs,
+and upsert it using the template in `seed.sql`. Never reuse an ID; set
+`is_enabled = false` when an object disappears.
+
+Existing `sponsorships` rows are enough to bootstrap their referenced assets.
+All historical rows remain in `sponsorships_legacy` (without API grants), and
+are copied to `sponsorship_history` plus `current_sponsorships`.
+`logo_url` is deliberately discarded.
+
+## Edge Function flow
+
+1. An authenticated, verified, non-anonymous user calls `reserve_checkout`.
+   Pass the catalog `version` as `p_expected_asset_version` and a unique,
+   retry-stable idempotency key. The first lifetime claim completes atomically
+   for USD 0. Later unowned claims cost USD 100. An occupied asset uses its
+   current `takeover_price_cents`.
+2. For a paid order, create the provider checkout from the returned immutable
+   amount, currency, order ID and expiry. Do not trust a client price. The Edge
+   Function then calls `attach_provider_checkout` with the order version and
+   provider checkout ID, preventing two checkout sessions for one order.
+3. A webhook Edge Function verifies the provider signature and calls
+   `finalize_payment` with the service role. `(provider, provider_event_id)` is
+   unique and payload reuse is checked. Ownership transfer, history closure,
+   catalog version increment and takeover-price doubling are one transaction.
+4. New branding is `pending` and is not public. A moderation worker calls
+   `moderate_branding`. `active_branding` and the compatibility
+   `sponsorships` view expose only approved branding and no owner identity.
+5. Run `release_expired_reservations` periodically. `release_sponsorship`
+   supports an owner release or a service-role moderation release.
+
+`update_branding` is the only owner branding mutation and always returns the
+branding to moderation. All table writes are denied to API roles.
+
+The initial takeover price is USD 100 and doubles in the same locked
+transaction as each successful takeover. `bigint` overflow protection freezes
+the price only beyond 4.6e18 cents, an operationally unreachable safeguard.
+
+## Compatibility note
+
+The old frontend directly upserted `sponsorships` and selected `owner_id` and
+`logo_url`. That is intentionally no longer allowed. The new `sponsorships`
+name is a read-only active-branding view. Frontend/Edge integration must use
+the RPC flow and private Storage `logo_path`; this backend-only change does not
+modify frontend or Edge Functions.
+
+## Exact RPC signatures
+
+PostgREST can call these named parameters:
+
+- `reserve_checkout(p_asset_id text, p_company text, p_target_url text,
+  p_logo_path text, p_color text, p_animation text, p_idempotency_key text,
+  p_expected_asset_version bigint default null, p_ttl_seconds integer default
+  900) -> commerce_orders` — authenticated user.
+- `attach_provider_checkout(p_order_id uuid, p_expected_order_version bigint,
+  p_provider text, p_provider_checkout_id text) -> commerce_orders` — service
+  role after creating a checkout.
+- `finalize_payment(p_provider text, p_provider_event_id text,
+  p_provider_checkout_id text, p_order_id uuid, p_expected_order_version
+  bigint, p_amount_cents bigint, p_currency text, p_event_type text, p_payload
+  jsonb) -> commerce_orders` — service-role webhook after signature
+  verification.
+- `update_branding(p_asset_id text, p_company text, p_target_url text,
+  p_logo_path text, p_color text, p_animation text) -> current_sponsorships` —
+  verified owner.
+- `moderate_branding(p_asset_id text, p_decision text, p_reason text default
+  null) -> current_sponsorships` — service role.
+- `release_sponsorship(p_asset_id text, p_reason text default 'released') ->
+  boolean` — verified owner or service role.
+- `release_expired_reservations() -> integer` — service role.

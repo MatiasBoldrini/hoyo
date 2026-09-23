@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import marketCatalog from "./market-catalog.json";
 import { loadProps, makeProp, propMaterials } from "./props.js";
 import { createSfx } from "./audio.js";
 
@@ -318,6 +319,15 @@ function marketPrice(category, x, z, kind = "") {
   return Math.round((base + centrality * base * 1.35 + premium) / 10) * 10;
 }
 
+function marketCoordinate(value) {
+  const quantized = Math.round(value * 1000);
+  return `${quantized < 0 ? "m" : "p"}${Math.abs(quantized)}`;
+}
+
+function stableMarketId(category, kind, x, z) {
+  return `${category}-${kind}-${marketCoordinate(x)}-${marketCoordinate(z)}`;
+}
+
 function assetName(category, kind, index) {
   const serial = String(index + 1).padStart(2, "0");
   const names = {
@@ -358,7 +368,7 @@ function buildMarketInventory(objects, mapPlan) {
     const block = mapPlan.blocks[index];
     const zone = marketZone(block.x, block.z);
     items.push({
-      id: `parcel-${Math.round(block.x)}-${Math.round(block.z)}`,
+      id: stableMarketId("parcel", block.kind, block.x, block.z),
       shortId: `MZ-${String(index + 1).padStart(2, "0")}`,
       category: "parcel",
       name: `Manzana ${zone} ${String(index + 1).padStart(2, "0")}`,
@@ -380,7 +390,8 @@ function buildMarketInventory(objects, mapPlan) {
     const index = counts[category]++;
     const zone = marketZone(object.x, object.z);
     items.push({
-      id: `asset-${objectIndex}`,
+      id: stableMarketId(category, object.kind, object.x, object.z),
+      legacyId: `asset-${objectIndex}`,
       shortId: `${category === "building" ? "ED" : category === "vehicle" ? "VH" : "EP"}-${String(index + 1).padStart(3, "0")}`,
       category,
       name: assetName(category, object.kind, index),
@@ -399,6 +410,23 @@ function buildMarketInventory(objects, mapPlan) {
       target: object,
     });
   });
+  const ids = new Set();
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (ids.has(item.id)) throw new Error(`ID de activo duplicado: ${item.id}`);
+    ids.add(item.id);
+    const expected = marketCatalog.items[index];
+    if (!expected || expected[0] !== item.id || expected[1] !== item.name) {
+      throw new Error(
+        `Catálogo de marketplace desincronizado en la posición ${index}: ${item.id}`,
+      );
+    }
+  }
+  if (items.length !== marketCatalog.items.length) {
+    throw new Error(
+      `Catálogo de marketplace desincronizado: ${items.length} objetos visibles, ${marketCatalog.items.length} catalogados`,
+    );
+  }
   return items;
 }
 

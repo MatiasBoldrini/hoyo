@@ -1,32 +1,15 @@
 const BRAND_COLORS = ["#2257e6", "#f05a35", "#111827", "#16a06d", "#8b5cf6", "#eab308"];
-const STORAGE_KEY = "hoyo-market-places-v2";
 const ICONS = { building: "▥", vehicle: "◆", place: "●", parcel: "▦" };
 
 function safeUrl(value) {
   const raw = value.trim();
   if (!raw) return "";
+  if (/^[a-z][a-z\d+.-]*:/i.test(raw) && !/^https:\/\//i.test(raw)) return "";
   try {
-    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    const url = new URL(/^https:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return url.protocol === "https:" ? url.href : "";
   } catch {
     return "";
-  }
-}
-
-function readCache() {
-  try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeCache(records) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  } catch {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.map((record) => ({ ...record, logo: "" }))));
   }
 }
 
@@ -51,6 +34,8 @@ export async function mountCityExplore(game) {
   const help = document.querySelector("#explore-help");
   const notice = document.querySelector("#explore-notice");
   const connection = document.querySelector("#explore-connection-text");
+  const sessionLabel = document.querySelector("#explore-session");
+  const logoutButton = document.querySelector("#explore-logout");
   const editor = document.querySelector("#explore-editor");
   const editorClose = document.querySelector("#explore-editor-close");
   const objectIcon = document.querySelector("#editor-object-icon");
@@ -64,14 +49,21 @@ export async function mountCityExplore(game) {
   const brandLogo = document.querySelector("#brand-logo");
   const logoError = document.querySelector("#brand-logo-error");
   const formError = document.querySelector("#explore-form-error");
+  const formStatus = document.querySelector("#explore-form-status");
   const saveButton = document.querySelector("#explore-save");
+  const price = document.querySelector("#editor-price");
+  const authForm = document.querySelector("#explore-auth-form");
+  const authEmail = document.querySelector("#explore-auth-email");
+  const authSend = document.querySelector("#explore-auth-send");
+  const authStatus = document.querySelector("#explore-auth-status");
   const colors = document.querySelector("#brand-colors");
   const livePreview = document.querySelector("#editor-live-preview");
   const previewLogo = document.querySelector("#editor-preview-logo");
   const previewName = document.querySelector("#editor-preview-name");
   const inventory = game.getCityItems();
-  let records = readCache().filter((record) => inventory.some((item) => item.id === record.itemId));
+  let records = [];
   let store = null;
+  let currentSession = null;
   let selected = null;
   let logoData = "";
   let logoPath = "";
@@ -143,7 +135,7 @@ export async function mountCityExplore(game) {
     const record = recordFor(item);
     const mine = record?.mine;
     const occupied = record && !mine;
-    editorLocked = Boolean(occupied);
+    editorLocked = false;
     objectIcon.textContent = ICONS[item.category] || "●";
     objectName.textContent = item.name;
     objectZone.textContent = item.zone;
@@ -151,16 +143,26 @@ export async function mountCityExplore(game) {
     objectState.className = occupied ? "occupied" : mine ? "mine" : "";
     brandLink.href = record?.url || "";
     brandLink.hidden = !record?.url;
-    brandName.value = record?.company || "";
-    brandUrl.value = record?.url || "";
-    logoData = record?.logo || "";
-    logoPath = record?.logoPath || "";
+    brandName.value = mine ? record?.company || "" : "";
+    brandUrl.value = mine ? record?.url || "" : "";
+    logoData = mine ? record?.logo || "" : "";
+    logoPath = mine ? record?.logoPath || "" : "";
     brandLogo.value = "";
-    brandColor = record?.color || BRAND_COLORS[0];
-    setAnimation(record?.animation || "float");
-    for (const input of form.elements) input.disabled = Boolean(occupied);
-    saveButton.hidden = Boolean(occupied);
+    brandColor = mine ? record?.color || BRAND_COLORS[0] : BRAND_COLORS[0];
+    setAnimation(mine ? record?.animation || "float" : "float");
+    for (const input of form.elements) input.disabled = false;
+    saveButton.hidden = Boolean(occupied && record.canTakeover === false);
+    saveButton.textContent = mine ? "Guardar cambios" : occupied ? "Reemplazar" : "Reclamar gratis";
+    const protection = record?.protectedUntil
+      ? ` · protegido hasta ${new Date(record.protectedUntil).toLocaleDateString("es-AR")}`
+      : "";
+    price.textContent = occupied
+      ? `Próximo precio: USD ${record.nextPrice || item.price}${protection}`
+      : "";
+    price.hidden = !occupied;
+    authForm.hidden = Boolean(currentSession?.user && !currentSession.user.is_anonymous);
     formError.hidden = true;
+    formStatus.textContent = "";
     logoError.hidden = true;
     renderColors();
     editor.hidden = false;
@@ -198,10 +200,46 @@ export async function mountCityExplore(game) {
   async function syncRecords() {
     if (!store) return;
     records = (await store.list()).filter((record) => inventory.some((item) => item.id === record.itemId));
-    writeCache(records);
     game.setBrandings(records);
     if (selected) openEditor(selected);
   }
+
+  function renderSession(nextSession) {
+    currentSession = nextSession;
+    const email = nextSession?.user && !nextSession.user.is_anonymous ? nextSession.user.email : "";
+    sessionLabel.textContent = email || "Sin sesión";
+    logoutButton.hidden = !email;
+    if (selected) openEditor(selected);
+  }
+
+  authForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!store) {
+      authStatus.textContent = "La autenticación no está disponible.";
+      return;
+    }
+    authSend.disabled = true;
+    authStatus.textContent = "Enviando…";
+    try {
+      await store.sendMagicLink(authEmail.value);
+      authStatus.textContent = "Revisá tu email y abrí el enlace en este dispositivo.";
+    } catch (error) {
+      authStatus.textContent = error.message || "No pudimos enviar el enlace.";
+    } finally {
+      authSend.disabled = false;
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    logoutButton.disabled = true;
+    try {
+      await store?.logout();
+    } catch (error) {
+      connection.textContent = error.message || "No pudimos cerrar la sesión.";
+    } finally {
+      logoutButton.disabled = false;
+    }
+  });
 
   openButton.addEventListener("click", openExplore);
   closeButton.addEventListener("click", closeExplore);
@@ -315,19 +353,48 @@ export async function mountCityExplore(game) {
       return;
     }
     brandUrl.setCustomValidity("");
+    if (!store) {
+      formError.textContent = "No se puede publicar sin conexión al servidor.";
+      formError.hidden = false;
+      return;
+    }
+    if (!currentSession?.user || currentSession.user.is_anonymous) {
+      authForm.hidden = false;
+      authEmail.focus();
+      formError.textContent = "Iniciá sesión con tu email antes de continuar.";
+      formError.hidden = false;
+      return;
+    }
+    const existing = recordFor(selected);
+    const action = !existing ? "claim" : existing.mine ? "update" : "takeover";
     saveButton.disabled = true;
-    saveButton.textContent = "Guardando…";
+    saveButton.setAttribute("aria-busy", "true");
+    saveButton.textContent = action === "takeover" ? "Preparando pago…" : "Guardando…";
     formError.hidden = true;
+    formStatus.textContent = "";
     try {
       const record = previewRecord();
-      const saved = store ? await store.save(record, selected) : record;
+      if (action !== "update") {
+        const checkoutUrl = await store.acquire(record, selected, existing);
+        if (!checkoutUrl) {
+          await syncRecords();
+          formStatus.textContent = "El lugar es tuyo. La marca quedó pendiente de revisión.";
+          saveButton.disabled = false;
+          saveButton.textContent = "Guardar cambios";
+          return;
+        }
+        formStatus.textContent = "Redirigiendo al pago seguro…";
+        window.location.assign(checkoutUrl);
+        return;
+      }
+      const saved = await store.save(record, selected);
       records = [...records.filter((candidate) => candidate.itemId !== saved.itemId), saved];
-      writeCache(records);
       game.setBrandings(records);
       objectState.textContent = "Guardado";
       objectState.className = "mine";
       brandLink.href = saved.url || "";
       brandLink.hidden = !saved.url;
+      formStatus.textContent = "Cambios confirmados por el servidor.";
       saveButton.textContent = "Guardado ✓";
       window.setTimeout(() => {
         saveButton.disabled = false;
@@ -337,7 +404,10 @@ export async function mountCityExplore(game) {
       formError.textContent = error.message || "No pudimos guardar los cambios.";
       formError.hidden = false;
       saveButton.disabled = false;
-      saveButton.textContent = "Guardar en la ciudad";
+      saveButton.textContent =
+        action === "takeover" ? "Reemplazar" : action === "claim" ? "Reclamar gratis" : "Guardar cambios";
+    } finally {
+      saveButton.removeAttribute("aria-busy");
     }
   });
 
@@ -345,17 +415,31 @@ export async function mountCityExplore(game) {
   try {
     const { connectSponsorStore, sponsorStoreEnabled } = await import("./sponsor-store.js");
     if (!sponsorStoreEnabled) {
-      connection.textContent = "Modo local";
+      connection.textContent = "Sólo lectura · sin servidor";
       return;
     }
     store = await connectSponsorStore();
+    renderSession(await store.getSession());
     await syncRecords();
     connection.textContent = "Ciudad sincronizada";
+    store.onAuthChange((nextSession) => {
+      renderSession(nextSession);
+      syncRecords().catch(() => {});
+    });
     store.subscribe(() => {
       syncRecords().catch((error) => console.warn("No se pudieron actualizar las marcas", error));
     });
   } catch (error) {
-    console.warn("Supabase no disponible; usando modo local", error);
-    connection.textContent = "Modo local";
+    console.warn("Supabase no disponible", error);
+    connection.textContent = "Sólo lectura · sin conexión";
+  }
+
+  const checkoutReturn = new URLSearchParams(location.search).get("checkout");
+  if (checkoutReturn === "returned") {
+    notice.textContent = "Volviste del pago. Estamos esperando la confirmación del servidor.";
+    notice.classList.remove("hidden");
+  } else if (checkoutReturn === "cancelled") {
+    notice.textContent = "Pago cancelado. No se hizo ningún cambio.";
+    notice.classList.remove("hidden");
   }
 }

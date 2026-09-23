@@ -1,122 +1,206 @@
 import { createClient } from "@supabase/supabase-js";
+import { SPONSOR_CONTRACT } from "./sponsor-contract.js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
 export const sponsorStoreEnabled = Boolean(url && key);
 
 const supabase = sponsorStoreEnabled
   ? createClient(url, key, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-      },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })
   : null;
 
-let userId = "";
+function messageFor(error) {
+  if (error?.code === "23505") {
+    return "Ese lugar cambió de estado. Actualizá la ciudad e intentá de nuevo.";
+  }
+  if (error?.code === "42501") return "Tu sesión no está autorizada para realizar esa operación.";
+  return error?.message || "El servidor no pudo completar la operación.";
+}
 
-function fromRow(row) {
+function throwIf(error) {
+  if (error) throw new Error(messageFor(error));
+}
+
+function fromRow(row, logoUrls) {
+  const logoPath = row.logo_path || "";
   return {
     id: row.id,
     itemId: row.asset_id,
     company: row.company,
     url: row.target_url || "",
-    logo: row.logo_url || "",
-    logoPath: row.logo_path || "",
+    logo: logoUrls.get(logoPath) || "",
+    logoPath,
     color: row.color,
     animation: row.animation || "float",
-    ownerId: row.owner_id,
-    mine: row.owner_id === userId,
+    mine: row.mine === true,
     createdAt: row.created_at,
+    nextPrice: Number(row.next_price_cents || 0) / 100,
+    canTakeover: row.can_takeover !== false,
+    assetVersion: row.asset_version ?? null,
+    brandingStatus: row.branding_status || "",
   };
 }
 
-async function requireSession() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  let user = sessionData.session?.user;
-  if (!user) {
-    const { data, error } = await supabase.auth.signInAnonymously();
-    if (error) throw error;
-    user = data.user;
+async function signedLogoUrls(rows) {
+  const paths = [...new Set(rows.map((row) => row.logo_path).filter(Boolean))];
+  const urls = new Map();
+  if (paths.length === 0) return urls;
+  const { data, error } = await supabase.storage
+    .from(SPONSOR_CONTRACT.logoBucket)
+    .createSignedUrls(paths, 3600);
+  throwIf(error);
+  for (const item of data || []) {
+    if (item.path && item.signedUrl && !item.error) urls.set(item.path, item.signedUrl);
   }
-  if (!user) throw new Error("Supabase no pudo crear la sesión anónima.");
-  userId = user.id;
-  return user;
+  return urls;
 }
 
-async function dataUrlToBlob(dataUrl) {
-  const response = await fetch(dataUrl);
-  return response.blob();
+async function session() {
+  const { data, error } = await supabase.auth.getSession();
+  throwIf(error);
+  return data.session;
+}
+
+async function requireUser() {
+  const current = await session();
+  if (!current?.user || current.user.is_anonymous) {
+    throw new Error("Iniciá sesión con tu email para continuar.");
+  }
+  return current.user;
+}
+
+function updateBrandingPayload(record, item, logoPath) {
+  return {
+    p_asset_id: item.id,
+    p_company: record.company,
+    p_target_url: record.url || null,
+    p_logo_path: logoPath || null,
+    p_color: record.color,
+    p_animation: record.animation || "float",
+  };
+}
+
+function validCheckoutUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      SPONSOR_CONTRACT.checkoutHosts.some(
+        (host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function connectSponsorStore() {
   if (!supabase) return null;
-  await requireSession();
   return {
-    userId,
+    getSession: session,
+    onAuthChange(callback) {
+      const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => callback(nextSession));
+      return () => data.subscription.unsubscribe();
+    },
+    async sendMagicLink(email) {
+      const redirectTo = new URL(window.location.href);
+      redirectTo.search = "";
+      redirectTo.hash = "";
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: redirectTo.href, shouldCreateUser: true },
+      });
+      throwIf(error);
+    },
+    async logout() {
+      const { error } = await supabase.auth.signOut();
+      throwIf(error);
+    },
     async list() {
-      const { data, error } = await supabase
-        .from("sponsorships")
-        .select("id,asset_id,company,target_url,logo_path,logo_url,color,animation,owner_id,created_at")
-        .in("status", ["active", "pending"])
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-      return data.map(fromRow);
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.list);
+      throwIf(error);
+      const rows = data || [];
+      const logoUrls = await signedLogoUrls(rows);
+      return rows.map((row) => fromRow(row, logoUrls));
+    },
+    async uploadLogo(dataUrl, item) {
+      if (!dataUrl?.startsWith("data:")) return "";
+      const user = await requireUser();
+      const blob = await (await fetch(dataUrl)).blob();
+      const safeAsset = item.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const path = `${user.id}/${safeAsset}/${crypto.randomUUID()}.webp`;
+      const { error } = await supabase.storage
+        .from(SPONSOR_CONTRACT.logoBucket)
+        .upload(path, blob, { contentType: "image/webp", upsert: false });
+      throwIf(error);
+      return path;
     },
     async save(record, item) {
-      let logoPath = record.logoPath || "";
-      let logoUrl = record.logo && !record.logo.startsWith("data:") ? record.logo : "";
-      if (record.logo?.startsWith("data:")) {
-        const blob = await dataUrlToBlob(record.logo);
-        logoPath = `${userId}/${item.id}.webp`;
-        const { error: uploadError } = await supabase.storage
-          .from("sponsor-logos")
-          .upload(logoPath, blob, { contentType: "image/webp", upsert: true });
-        if (uploadError) throw uploadError;
-        logoUrl = supabase.storage.from("sponsor-logos").getPublicUrl(logoPath).data.publicUrl;
+      await requireUser();
+      const logoPath = record.logo?.startsWith("data:")
+        ? await this.uploadLogo(record.logo, item)
+        : record.logoPath || "";
+      const { error } = await supabase.rpc(
+        SPONSOR_CONTRACT.rpc.updateBranding,
+        updateBrandingPayload(record, item, logoPath),
+      );
+      throwIf(error);
+      const row = (await this.list()).find((candidate) => candidate.itemId === item.id);
+      if (!row) throw new Error("El servidor no devolvió la marca confirmada.");
+      return row;
+    },
+    async acquire(record, item, currentRecord) {
+      await requireUser();
+      const logoPath = record.logo?.startsWith("data:")
+        ? await this.uploadLogo(record.logo, item)
+        : record.logoPath || "";
+      let assetVersion = currentRecord?.assetVersion ?? null;
+      if (assetVersion === null) {
+        const { data: asset, error: assetError } = await supabase
+          .from("market_assets")
+          .select("version")
+          .eq("id", item.id)
+          .single();
+        throwIf(assetError);
+        assetVersion = asset.version;
       }
-      const payload = {
-        asset_id: item.id,
-        category: item.category,
-        asset_name: item.name,
-        company: record.company,
-        target_url: record.url || null,
-        logo_path: logoPath || null,
-        logo_url: logoUrl || null,
-        color: record.color,
-        animation: record.animation || "float",
-        price_usd: item.price,
-        owner_id: userId,
-        status: "active",
-      };
-      const { data, error } = await supabase
-        .from("sponsorships")
-        .upsert(payload, { onConflict: "asset_id" })
-        .select("id,asset_id,company,target_url,logo_path,logo_url,color,animation,owner_id,created_at")
-        .single();
-      if (error) {
-        if (error.code === "23505" || error.code === "42501") {
-          throw new Error("Ese lugar acaba de ser elegido por otra persona. Probá con otro.");
-        }
-        throw error;
+      const retryKey = `hoyo-checkout:${item.id}`;
+      const idempotencyKey = sessionStorage.getItem(retryKey) || crypto.randomUUID();
+      sessionStorage.setItem(retryKey, idempotencyKey);
+      const { data, error } = await supabase.functions.invoke(SPONSOR_CONTRACT.functions.checkout, {
+        body: {
+          asset_id: item.id,
+          company: record.company,
+          target_url: record.url || null,
+          logo_path: logoPath || null,
+          color: record.color,
+          animation: record.animation || "float",
+          idempotency_key: idempotencyKey,
+          expected_asset_version: assetVersion,
+          success_url: `${location.origin}${location.pathname}?checkout=returned`,
+          cancel_url: `${location.origin}${location.pathname}?checkout=cancelled`,
+        },
+      });
+      throwIf(error);
+      sessionStorage.removeItem(retryKey);
+      if (data?.status === "completed" && data?.kind === "free_claim") return "";
+      if (!validCheckoutUrl(data?.checkoutUrl)) {
+        throw new Error("El servidor devolvió una URL de pago no permitida.");
       }
-      return fromRow(data);
+      return data.checkoutUrl;
     },
     subscribe(onChange) {
       const channel = supabase
         .channel("public-sponsorships")
         .on(
           "postgres_changes",
-          { event: "*", schema: "public", table: "sponsorships" },
-          () => onChange(),
+          { event: "*", schema: "public", table: SPONSOR_CONTRACT.table },
+          onChange,
         )
         .subscribe();
-      return () => {
-        supabase.removeChannel(channel);
-      };
+      return () => supabase.removeChannel(channel);
     },
   };
 }
