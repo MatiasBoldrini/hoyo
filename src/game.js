@@ -504,18 +504,37 @@ function normalizeSurface(value) {
   return /^#[0-9a-f]{6}$/.test(color) ? color : "";
 }
 
-// El volumen principal (pared, cuerpo del kiosco, piedra de la fuente) es el color
-// con más área. Vidrios, techos y detalles quedan como están.
-function bodyColorOf(geometry) {
+const PART_MIN_SHARE = 0.02;
+const PART_LIMIT = 5;
+const PART_LABELS = {
+  "7fb4d4": "Vidrio",
+  "9fcbe3": "Franjas",
+  "8a5a3c": "Madera",
+  "9aa3a8": "Metal",
+  "525a60": "Techo",
+  "4b5960": "Techo",
+  "ffffff": "Marquesina",
+  "f8f4ea": "Toldo claro",
+  "5a5f66": "Cornisa",
+  "d9d4c7": "Piedra",
+  "5cc8f0": "Agua",
+  "4fb8e8": "Agua",
+  "ff5a5f": "Toldo",
+  "ffc93c": "Toldo",
+  "3fa7d6": "Toldo",
+  "59c26b": "Toldo",
+  "ff8c42": "Toldo",
+};
+
+function paletteFromGeometry(geometry) {
   const position = geometry.getAttribute("position");
   const color = geometry.getAttribute("color");
-  if (!position || !color || position.count < 3) return null;
-  const areaByColor = new Map();
-  let bestKey = "";
-  let bestArea = -1;
+  if (!position || !color || position.count < 3) return [];
+  const areaByKey = new Map();
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
+  let total = 0;
   for (let i = 0; i + 2 < position.count; i += 3) {
     a.fromBufferAttribute(position, i);
     b.fromBufferAttribute(position, i + 1);
@@ -524,25 +543,49 @@ function bodyColorOf(geometry) {
     c.sub(a);
     const area = b.cross(c).length() * 0.5;
     const key = `${color.getX(i).toFixed(4)}:${color.getY(i).toFixed(4)}:${color.getZ(i).toFixed(4)}`;
-    const total = (areaByColor.get(key) || 0) + area;
-    areaByColor.set(key, total);
-    if (total > bestArea) {
-      bestArea = total;
-      bestKey = key;
-    }
+    const entry = areaByKey.get(key) || { r: color.getX(i), g: color.getY(i), b: color.getZ(i), area: 0 };
+    entry.area += area;
+    areaByKey.set(key, entry);
+    total += area;
   }
-  const [r, g, bChannel] = bestKey.split(":").map(Number);
-  return { r, g, b: bChannel };
+  const swatch = new THREE.Color();
+  const ranked = [...areaByKey.values()]
+    .sort((left, right) => right.area - left.area)
+    .filter((entry, index) => index === 0 || entry.area / Math.max(total, 0.0001) >= PART_MIN_SHARE)
+    .slice(0, PART_LIMIT);
+  const palette = [];
+  for (const entry of ranked) {
+    swatch.setRGB(entry.r, entry.g, entry.b);
+    const id = swatch.getHexString();
+    if (palette.some((part) => part.id === id)) continue;
+    palette.push({ id, hex: `#${id}`, r: entry.r, g: entry.g, b: entry.b });
+  }
+  return palette;
 }
 
-function paintBody(mesh, hex) {
+function paletteFor(mesh) {
+  if (mesh.userData.placePalette) return mesh.userData.placePalette;
+  const source = mesh.userData.bodySource || mesh.geometry;
+  const palette = paletteFromGeometry(source);
+  mesh.userData.placePalette = palette;
+  return palette;
+}
+
+function knownPartLabel(id, kind) {
+  if (id === "9fcbe3" || (id === "7fb4d4" && kind === "tower")) return "Franjas";
+  if (id === "7fb4d4") return "Vidrio";
+  if (id === "8a5a3c" && (kind === "building" || kind === "tower")) return "Puerta";
+  if ((id === "ff5a5f" || id === "ffc93c" || id === "3fa7d6" || id === "59c26b" || id === "ff8c42") && kind === "kiosk") {
+    return "Techo";
+  }
+  return PART_LABELS[id] || "";
+}
+
+function paintParts(mesh, assignments) {
   const source = mesh.userData.bodySource || mesh.geometry;
   const sourceColor = source.getAttribute("color");
-  if (!sourceColor) return false;
+  if (!sourceColor || !assignments.length) return false;
   if (!mesh.userData.bodySource) mesh.userData.bodySource = source;
-  if (!mesh.userData.bodyRgb) mesh.userData.bodyRgb = bodyColorOf(source);
-  const body = mesh.userData.bodyRgb;
-  if (!body) return false;
   let tinted = mesh.userData.bodyGeometry;
   if (!tinted) {
     tinted = source.clone();
@@ -551,13 +594,22 @@ function paintBody(mesh, hex) {
     mesh.userData.bodyGeometry = tinted;
   }
   const next = tinted.getAttribute("color");
-  const paint = new THREE.Color(hex);
   for (let i = 0; i < sourceColor.count; i++) {
-    const dr = sourceColor.getX(i) - body.r;
-    const dg = sourceColor.getY(i) - body.g;
-    const db = sourceColor.getZ(i) - body.b;
-    if (dr * dr + dg * dg + db * db < 0.0004) next.setXYZ(i, paint.r, paint.g, paint.b);
-    else next.setXYZ(i, sourceColor.getX(i), sourceColor.getY(i), sourceColor.getZ(i));
+    const r = sourceColor.getX(i);
+    const g = sourceColor.getY(i);
+    const b = sourceColor.getZ(i);
+    let paint = null;
+    for (const part of assignments) {
+      const dr = r - part.r;
+      const dg = g - part.g;
+      const db = b - part.b;
+      if (dr * dr + dg * dg + db * db < 0.0004) {
+        paint = part.paint;
+        break;
+      }
+    }
+    if (paint) next.setXYZ(i, paint.r, paint.g, paint.b);
+    else next.setXYZ(i, r, g, b);
   }
   next.needsUpdate = true;
   mesh.geometry = tinted;
@@ -820,6 +872,7 @@ export async function mountGame(canvas, hooks) {
   const mapPlan = buildCity(scene, objects, rand);
   const marketItems = buildMarketInventory(objects);
   const marketByTarget = new Map(marketItems.map((item) => [item.target, item]));
+  const marketByMesh = new Map(marketItems.map((item) => [item.target.mesh, item]));
   const brandMarkers = new Map();
   const outlineHulls = new WeakMap();
   const outlineGeometry = new THREE.BufferGeometry();
@@ -923,7 +976,7 @@ export async function mountGame(canvas, hooks) {
     });
     brandMarkers.set(item.id, marker);
     scene.add(marker);
-    if (applySurfaceColor(item, record.design?.surface)) surfacedIds.add(item.id);
+    if (applySurfaceColor(item, record.design?.surface, record.design?.parts)) surfacedIds.add(item.id);
   }
 
   const surfacedIds = new Set();
@@ -937,6 +990,7 @@ export async function mountGame(canvas, hooks) {
     obj.mesh.position.set(obj.x, 0, obj.z);
     obj.mesh.rotation.set(0, obj.yaw, 0);
     obj.mesh.updateMatrix();
+    obj.mesh.updateMatrixWorld(true);
     if (!obj.mesh.parent) scene.add(obj.mesh);
   }
 
@@ -947,15 +1001,21 @@ export async function mountGame(canvas, hooks) {
     if (obj.batch) obj.batch.dirty = true;
   }
 
-  function applySurfaceColor(item, surface) {
+  function applySurfaceColor(item, surface, parts) {
     const obj = item?.target;
     if (!obj?.mesh) return false;
-    const color = normalizeSurface(surface);
-    if (!color) {
+    const palette = paletteFor(obj.mesh);
+    const assignments = [];
+    palette.forEach((part, index) => {
+      const chosen = index === 0 ? normalizeSurface(surface) : normalizeSurface(parts?.[part.id]);
+      if (!chosen) return;
+      assignments.push({ r: part.r, g: part.g, b: part.b, paint: new THREE.Color(chosen) });
+    });
+    if (!assignments.length) {
       if (obj.solo) hideSoloMesh(obj);
       return false;
     }
-    if (!paintBody(obj.mesh, color)) return false;
+    if (!paintParts(obj.mesh, assignments)) return false;
     showSoloMesh(obj);
     return true;
   }
@@ -1429,18 +1489,33 @@ export async function mountGame(canvas, hooks) {
     return { ...value };
   }
 
+  function explorePickMeshes() {
+    const meshes = batchList.map((record) => record.mesh);
+    for (const item of marketItems) {
+      const obj = item.target;
+      if (obj?.solo && obj.mesh?.parent) meshes.push(obj.mesh);
+    }
+    return meshes;
+  }
+
   function raycastExploreItem(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     aimRay.setFromCamera(pointer, camera);
+    const reach = (scene.fog?.far ?? 380) + 40;
     const markerHit = aimRay.intersectObjects([...brandMarkers.values()], true)[0];
-    if (markerHit && markerHit.distance < 100) return markerHit.object.userData.marketItem;
-    const hit = aimRay.intersectObjects(batchList.map((record) => record.mesh), false)[0];
-    if (!hit || hit.distance > 100) return null;
-    const record = batchList.find((candidate) => candidate.mesh === hit.object);
-    const target = record?.packedItems[hit.instanceId];
-    return marketByTarget.get(target) || null;
+    const meshHit = aimRay.intersectObjects(explorePickMeshes(), false)[0];
+    const hit = [markerHit, meshHit]
+      .filter((entry) => entry && entry.distance <= reach)
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (!hit) return null;
+    if (hit.object.userData?.marketItem) return hit.object.userData.marketItem;
+    if (Number.isInteger(hit.instanceId)) {
+      const record = batchList.find((candidate) => candidate.mesh === hit.object);
+      return marketByTarget.get(record?.packedItems[hit.instanceId]) || null;
+    }
+    return marketByMesh.get(hit.object) || null;
   }
 
   function pickExploreItem(clientX, clientY) {
@@ -2524,6 +2599,93 @@ export async function mountGame(canvas, hooks) {
   }
   window.addEventListener("resize", onResize);
 
+  const facadeScene = new THREE.Scene();
+  facadeScene.add(new THREE.HemisphereLight(0xe7f6ff, 0xc5d0b0, 1.05));
+  const facadeSun = new THREE.DirectionalLight(0xfff6df, 1.2);
+  facadeSun.position.set(0.45, 0.9, 1);
+  facadeScene.add(facadeSun);
+  const facadeMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const facadeMesh = new THREE.Mesh(new THREE.BufferGeometry(), facadeMaterial);
+  facadeScene.add(facadeMesh);
+  const facadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 80);
+  const facadeClear = new THREE.Color();
+  let facadeTarget = null;
+  let facadeCache = { key: "", image: null };
+
+  function facadeBufferSize(faceWidth, faceHeight) {
+    const aspect = faceWidth / Math.max(faceHeight, 0.01);
+    const longEdge = 900;
+    if (aspect >= 1) return [longEdge, Math.max(2, Math.round(longEdge / aspect))];
+    return [Math.max(2, Math.round(longEdge * aspect)), longEdge];
+  }
+
+  function paintFacade(itemId, canvas, colors) {
+    const item = marketItems.find((entry) => entry.id === itemId);
+    const obj = item?.target;
+    if (!obj?.mesh || !canvas) return false;
+    const color = normalizeSurface(colors?.surface ?? colors);
+    const parts = colors?.parts && typeof colors.parts === "object" ? colors.parts : {};
+    const partKey = Object.keys(parts)
+      .sort()
+      .map((id) => `${id}=${parts[id]}`)
+      .join(",");
+    const [width, height] = facadeBufferSize(obj.halfX * 2, obj.height);
+    const key = `${item.id}:${color}:${partKey}:${width}x${height}`;
+    const ctx = canvas.getContext("2d");
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    canvas.dataset.kind = item.kind;
+    if (facadeCache.key === key && facadeCache.image) {
+      ctx.putImageData(facadeCache.image, 0, 0);
+      return true;
+    }
+
+    applySurfaceColor(item, color, parts);
+    facadeMesh.geometry = obj.mesh.geometry;
+    facadeCamera.left = -obj.halfX;
+    facadeCamera.right = obj.halfX;
+    facadeCamera.bottom = -obj.height / 2;
+    facadeCamera.top = obj.height / 2;
+    facadeCamera.near = 0.05;
+    facadeCamera.far = obj.halfZ * 2 + 8;
+    facadeCamera.position.set(0, obj.height * 0.5, obj.halfZ + 1.5);
+    facadeCamera.lookAt(0, obj.height * 0.5, 0);
+    facadeCamera.updateProjectionMatrix();
+    if (!facadeTarget || facadeTarget.width !== width || facadeTarget.height !== height) {
+      facadeTarget?.dispose();
+      facadeTarget = new THREE.WebGLRenderTarget(width, height);
+      facadeTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    }
+
+    const previousTarget = renderer.getRenderTarget();
+    renderer.getClearColor(facadeClear);
+    const previousAlpha = renderer.getClearAlpha();
+    try {
+      renderer.setRenderTarget(facadeTarget);
+      renderer.setClearColor(SKY, 1);
+      renderer.clear(true, true, true);
+      renderer.render(facadeScene, facadeCamera);
+      const pixels = new Uint8Array(width * height * 4);
+      renderer.readRenderTargetPixels(facadeTarget, 0, 0, width, height, pixels);
+      const image = ctx.createImageData(width, height);
+      const row = width * 4;
+      for (let y = 0; y < height; y += 1) {
+        image.data.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+      }
+      facadeCache = { key, image };
+      ctx.putImageData(image, 0, 0);
+      return true;
+    } catch (error) {
+      console.warn("No se pudo dibujar la fachada", error);
+      return false;
+    } finally {
+      renderer.setRenderTarget(previousTarget);
+      renderer.setClearColor(facadeClear, previousAlpha);
+    }
+  }
+
   const api = {
     start,
     returnToMenu,
@@ -2578,6 +2740,32 @@ export async function mountGame(canvas, hooks) {
     previewBranding(record) {
       setBranding(record);
       updateBrandMarkers();
+    },
+    paintFacade,
+    placePalette(itemId) {
+      const item = marketItems.find((entry) => entry.id === itemId);
+      const mesh = item?.target?.mesh;
+      if (!mesh) return [];
+      const palette = paletteFor(mesh);
+      let wallNamed = false;
+      const rows = palette.map((part, index) => {
+        let label = knownPartLabel(part.id, item.kind);
+        if (!label) {
+          if (!wallNamed) {
+            wallNamed = true;
+            label = item.kind === "fountain" ? "Piedra" : item.kind === "kiosk" ? "Cuerpo" : "Pared";
+          } else label = "Detalle";
+        }
+        return { id: part.id, label, original: part.hex, primary: index === 0 };
+      });
+      const wall = rows.findIndex((part) => part.label === "Pared" || part.label === "Cuerpo" || part.label === "Piedra");
+      if (wall > 0) rows.unshift(rows.splice(wall, 1)[0]);
+      const seen = new Map();
+      return rows.map((part) => {
+        const count = (seen.get(part.label) || 0) + 1;
+        seen.set(part.label, count);
+        return count > 1 ? { ...part, label: `${part.label} ${count}` } : part;
+      });
     },
     setBrandings,
     visitBrandAt(clientX, clientY) {

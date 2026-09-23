@@ -63,11 +63,33 @@ function readSurface(design) {
   return /^#[0-9a-f]{6}$/.test(color) ? color : "";
 }
 
-function publishedDesign(design, surface) {
+function readParts(design) {
+  const source = design?.parts;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const parts = {};
+  for (const [key, value] of Object.entries(source)) {
+    const id = String(key).replace("#", "").toLowerCase();
+    if (!/^[0-9a-f]{6}$/.test(id)) continue;
+    const color = readSurface({ surface: value });
+    if (color) parts[id] = color;
+  }
+  return parts;
+}
+
+function publishedDesign(design, surface, parts) {
   const next = { ...design };
   delete next.surface;
+  delete next.parts;
   if (surface) next.surface = surface;
+  const clean = readParts({ parts });
+  if (Object.keys(clean).length) next.parts = clean;
   return next;
+}
+
+function sameParts(a, b) {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  for (const key of keys) if (a?.[key] !== b?.[key]) return false;
+  return true;
 }
 
 function sameDesign(a, b) {
@@ -173,6 +195,7 @@ export async function mountCityExplore(game) {
   const colors = $("#brand-colors");
   const colorValue = $("#brand-color-value");
   const placeColors = $("#place-colors");
+  const placeParts = $("#place-parts");
   const placeColorValue = $("#place-color-value");
   const releaseButton = $("#listing-release");
 
@@ -212,6 +235,7 @@ export async function mountCityExplore(game) {
   let flashTimer = 0;
   let releaseTimer = 0;
   let hoverFrame = 0;
+  let placePartId = "";
 
   game.setBrandings(records);
 
@@ -234,6 +258,7 @@ export async function mountCityExplore(game) {
       logoPath: record?.logoPath || "",
       color: (record?.color || BRAND_COLORS[0]).toLowerCase(),
       surface: readSurface(record?.design),
+      parts: readParts(record?.design),
       design: normalizeDesign(record?.design),
     };
   }
@@ -247,7 +272,7 @@ export async function mountCityExplore(game) {
       logoPath: draft.logoPath,
       color: draft.color,
       animation: "fixed",
-      design: publishedDesign(draft.design, draft.surface),
+      design: publishedDesign(draft.design, draft.surface, draft.parts),
       mine: true,
     };
   }
@@ -262,6 +287,7 @@ export async function mountCityExplore(game) {
       draft.logo !== saved.logo ||
       draft.color !== saved.color ||
       draft.surface !== saved.surface ||
+      !sameParts(draft.parts, saved.parts) ||
       !sameDesign(draft.design, saved.design)
     );
   }
@@ -328,17 +354,55 @@ export async function mountCityExplore(game) {
     renderDraft();
   }
 
+  function placePalette() {
+    return selected ? game.placePalette(selected.id) : [];
+  }
+
+  function activePlacePart() {
+    const palette = placePalette();
+    return palette.find((part) => part.id === placePartId) || palette[0] || null;
+  }
+
+  function colorOfPart(part) {
+    if (!part) return "";
+    if (part.primary) return draft.surface;
+    return draft.parts[part.id] || "";
+  }
+
   function renderPlaceColors() {
+    const palette = placePalette();
+    const part = activePlacePart();
+    const current = colorOfPart(part);
+    placeParts.replaceChildren();
+    placeParts.hidden = palette.length < 2;
+    for (const entry of palette) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "place-part";
+      button.dataset.part = entry.id;
+      button.style.setProperty("--swatch", colorOfPart(entry) || entry.original);
+      button.setAttribute("role", "radio");
+      button.setAttribute("aria-checked", String(entry.id === part?.id));
+      button.setAttribute("aria-label", entry.label);
+      button.textContent = entry.label;
+      const chip = document.createElement("i");
+      button.prepend(chip);
+      button.addEventListener("click", () => {
+        placePartId = entry.id;
+        renderPlaceColors();
+      });
+      placeParts.append(button);
+    }
+
     placeColors.replaceChildren();
-    const current = draft.surface;
     const original = document.createElement("button");
     original.type = "button";
     original.className = "brand-swatch brand-swatch-original";
     original.setAttribute("role", "radio");
     original.setAttribute("aria-checked", String(!current));
-    original.setAttribute("aria-label", "Color original del lugar");
+    original.setAttribute("aria-label", part ? `Color original de ${part.label.toLowerCase()}` : "Color original del lugar");
     original.title = "Color original";
-    original.addEventListener("click", () => setSurface(""));
+    original.addEventListener("click", () => setPlaceColor(""));
     placeColors.append(original);
     for (const color of PLACE_COLORS) {
       const button = document.createElement("button");
@@ -347,125 +411,101 @@ export async function mountCityExplore(game) {
       button.style.setProperty("--swatch", color);
       button.setAttribute("role", "radio");
       button.setAttribute("aria-checked", String(color === current));
-      button.setAttribute("aria-label", `Color del lugar ${color.toUpperCase()}`);
-      button.addEventListener("click", () => setSurface(color));
+      button.setAttribute("aria-label", `${part?.label || "Lugar"} ${color.toUpperCase()}`);
+      button.addEventListener("click", () => setPlaceColor(color));
       placeColors.append(button);
     }
     const custom = Boolean(current) && !PLACE_COLORS.includes(current);
     const picker = document.createElement("label");
     picker.className = `brand-swatch brand-swatch-custom${custom ? " is-set" : ""}`;
-    picker.style.setProperty("--swatch", current || PLACE_COLORS[0]);
+    picker.style.setProperty("--swatch", current || part?.original || PLACE_COLORS[0]);
     picker.setAttribute("aria-checked", String(custom));
-    picker.title = "Elegir otro color para el lugar";
+    picker.title = "Elegir otro color";
     const input = document.createElement("input");
     input.type = "color";
-    input.value = current || PLACE_COLORS[0];
-    input.setAttribute("aria-label", "Elegir otro color para el lugar");
-    input.addEventListener("input", () => setSurface(input.value, { rerender: false }));
+    input.value = current || part?.original || PLACE_COLORS[0];
+    input.setAttribute("aria-label", "Elegir otro color para esta parte");
+    input.addEventListener("input", () => setPlaceColor(input.value, { rerender: false }));
     input.addEventListener("change", () => renderPlaceColors());
     picker.append(input);
     placeColors.append(picker);
+    placeColorValue.textContent =
+      palette.length > 1
+        ? `${part?.label || "Pared"} · ${current ? current.toUpperCase() : "Original"}`
+        : current
+          ? current.toUpperCase()
+          : "Original";
   }
 
-  function setSurface(color, { rerender = true } = {}) {
-    draft.surface = readSurface({ surface: color });
+  function setPlaceColor(color, { rerender = true } = {}) {
+    const part = activePlacePart();
+    const next = readSurface({ surface: color });
+    if (!part || part.primary) draft.surface = next;
+    else if (next) draft.parts = { ...draft.parts, [part.id]: next };
+    else {
+      const rest = { ...draft.parts };
+      delete rest[part.id];
+      draft.parts = rest;
+    }
     if (rerender) renderPlaceColors();
     else {
       const picker = placeColors.querySelector(".brand-swatch-custom");
-      picker.style.setProperty("--swatch", draft.surface);
-      picker.classList.add("is-set");
-      picker.setAttribute("aria-checked", "true");
+      picker.style.setProperty("--swatch", next || part?.original || PLACE_COLORS[0]);
+      picker.classList.toggle("is-set", Boolean(next));
+      picker.setAttribute("aria-checked", String(Boolean(next) && !PLACE_COLORS.includes(next)));
       for (const button of placeColors.querySelectorAll("button.brand-swatch")) {
         button.setAttribute("aria-checked", "false");
       }
+      const chip = placeParts.querySelector(`[data-part="${part?.id}"]`);
+      if (chip) chip.style.setProperty("--swatch", next || part.original);
+      const several = placePalette().length > 1;
+      placeColorValue.textContent = several
+        ? `${part?.label || "Pared"} · ${next ? next.toUpperCase() : "Original"}`
+        : next
+          ? next.toUpperCase()
+          : "Original";
     }
     renderDraft();
   }
 
-  function paintDesignerSurface() {
-    const { width, height } = designCanvas;
-    const kind = selected?.kind || "building";
-    designContext.clearRect(0, 0, width, height);
-
-    if (kind === "fountain") {
-      const stone = draft.surface || "#ded8ca";
-      designContext.fillStyle = "#84c95d";
-      designContext.fillRect(0, 0, width, height);
-      const gradient = designContext.createRadialGradient(width / 2, height * 0.56, 12, width / 2, height * 0.56, height * 0.48);
-      gradient.addColorStop(0, "#a7e8f3");
-      gradient.addColorStop(0.5, "#64bfd6");
-      gradient.addColorStop(0.52, stone);
-      gradient.addColorStop(0.76, stone);
-      gradient.addColorStop(0.78, "#6f756f");
-      gradient.addColorStop(1, "#56605b");
-      designContext.fillStyle = gradient;
-      designContext.fillRect(0, 0, width, height);
-      return;
-    }
-
-    const fallback = kind === "kiosk" ? "#9b7757" : kind === "shop" ? "#b8aaa0" : "#98a49c";
-    designContext.fillStyle = draft.surface || fallback;
-    designContext.fillRect(0, 0, width, height);
-    designContext.fillStyle = "rgba(255,255,255,.13)";
-    designContext.fillRect(width * 0.495, 0, width * 0.012, height);
-    designContext.fillStyle = "rgba(40,55,60,.18)";
-    for (let y = 42; y < height; y += 58) designContext.fillRect(0, y, width, 7);
-
-    if (kind !== "kiosk") {
-      for (const x of [70, width - 150]) {
-        for (const y of [36, height - 91]) {
-          designContext.fillStyle = "#5f7075";
-          designContext.beginPath();
-          designContext.roundRect(x, y, 80, 55, 5);
-          designContext.fill();
-          designContext.fillStyle = "#9dd9e6";
-          designContext.fillRect(x + 9, y + 8, 62, 39);
-        }
-      }
-    }
-    designContext.fillStyle = "#48545a";
-    designContext.fillRect(0, height - 14, width, 14);
-  }
-
   function paintDesignerArtwork() {
     const { design } = draft;
-    const width = designCanvas.width * design.scale;
-    const height = width * 0.5;
-    const centerX = width / 2 + design.x * (designCanvas.width - width);
-    const centerY = height / 2 + design.y * (designCanvas.height - height);
+    const signWidth = designCanvas.width * design.scale;
+    const signHeight = signWidth * 0.5;
+    const centerX = signWidth / 2 + design.x * (designCanvas.width - signWidth);
+    const centerY = signHeight / 2 + design.y * (designCanvas.height - signHeight);
     designContext.save();
     designContext.translate(centerX, centerY);
     designContext.rotate((design.rotation * Math.PI) / 180);
 
     if (designerImage) {
       const ratio = designerImage.width / designerImage.height;
-      let drawWidth = width;
+      let drawWidth = signWidth;
       let drawHeight = drawWidth / ratio;
-      const maxHeight = designCanvas.height * 0.72;
-      if (drawHeight > maxHeight) {
-        drawHeight = maxHeight;
+      if (drawHeight > signHeight) {
+        drawHeight = signHeight;
         drawWidth = drawHeight * ratio;
       }
       designContext.drawImage(designerImage, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
     } else {
       const label = draft.company.trim() || "Tu marca";
-      const fontSize = Math.max(22, width / Math.max(5.5, label.length * 0.58));
+      const fontSize = Math.max(18, signWidth / Math.max(5.5, label.length * 0.58));
       designContext.font = `900 ${fontSize}px "Avenir Next", sans-serif`;
       designContext.textAlign = "center";
       designContext.textBaseline = "middle";
       designContext.lineJoin = "round";
-      designContext.lineWidth = Math.max(5, fontSize * 0.14);
+      designContext.lineWidth = Math.max(4, fontSize * 0.14);
       designContext.strokeStyle = "rgba(255,255,255,.92)";
-      designContext.strokeText(label, 0, 0, width);
+      designContext.strokeText(label, 0, 0, signWidth * 0.92);
       designContext.fillStyle = draft.color;
-      designContext.fillText(label, 0, 0, width);
+      designContext.fillText(label, 0, 0, signWidth * 0.92);
     }
     designContext.restore();
   }
 
   function drawDesigner() {
-    if (!draft) return;
-    paintDesignerSurface();
+    if (!draft || !selected) return;
+    game.paintFacade(selected.id, designCanvas, { surface: draft.surface || "", parts: draft.parts });
     paintDesignerArtwork();
   }
 
@@ -497,7 +537,6 @@ export async function mountCityExplore(game) {
     logoRemove.hidden = !draft.logo;
     brandNameCount.textContent = `${draft.company.length}/24`;
     colorValue.textContent = draft.color.toUpperCase();
-    placeColorValue.textContent = draft.surface ? draft.surface.toUpperCase() : "Original";
     syncDesignerImage();
     drawDesigner();
     if (!saving) {
@@ -522,8 +561,8 @@ export async function mountCityExplore(game) {
     panel.style.setProperty("--brand", record?.color || "#2f9e6b");
     designHint.textContent =
       item.placement === "medallion"
-        ? "Arrastrá tu marca para ubicarla en el frente de la fuente."
-        : "Arrastrá tu marca para ubicarla en la fachada.";
+        ? "Arrastrá tu marca sobre el frente de la fuente."
+        : "Arrastrá tu marca sobre la pared.";
 
     owner.hidden = state !== "taken";
     form.hidden = false;
@@ -571,6 +610,7 @@ export async function mountCityExplore(game) {
   function loadDraft() {
     const record = recordFor(selected);
     draft = draftFrom(record?.mine ? record : null);
+    placePartId = "";
     designerImageSource = "";
     designerImage = null;
     brandName.value = draft.company;

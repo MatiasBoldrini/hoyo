@@ -203,8 +203,8 @@
 
 
             <div class="designer">
-              <canvas id="editor-design-canvas" width="640" height="280" aria-label="Ubicación de la marca sobre la superficie"></canvas>
-              <p id="editor-preview-context" class="designer-hint">Arrastrá tu marca para ubicarla en la fachada.</p>
+              <canvas id="editor-design-canvas" width="360" height="600" aria-label="Ubicación de la marca sobre la pared"></canvas>
+              <p id="editor-preview-context" class="designer-hint">Arrastrá tu marca sobre la pared.</p>
               <div class="designer-controls">
                 <label><span>Tamaño</span><input id="editor-design-scale" type="range" min="18" max="82" value="46" /></label>
                 <label><span>Rotación</span><input id="editor-design-rotation" type="range" min="-45" max="45" value="0" /></label>
@@ -243,8 +243,9 @@
             </div>
 
             <div class="listing-field">
-              <span class="listing-label">Color del lugar <small id="place-color-value">Original</small></span>
-              <div id="place-colors" class="brand-swatches" role="radiogroup" aria-label="Color del edificio, local o kiosco"></div>
+              <span class="listing-label">Colores del lugar <small id="place-color-value">Original</small></span>
+              <div id="place-parts" class="place-parts" role="radiogroup" aria-label="Parte del lugar" hidden></div>
+              <div id="place-colors" class="brand-swatches" role="radiogroup" aria-label="Color de la parte elegida"></div>
             </div>
 
             <button id="listing-release" class="release-button" type="button" hidden>Liberar este espacio</button>
