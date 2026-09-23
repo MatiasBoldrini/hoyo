@@ -170,7 +170,7 @@ function paintHud(state) {
     toast.hidden = toastText === "";
     toast.textContent = toastText;
   }
-  drawMinimap(state.map, state.me);
+  drawMinimap(state.map, state.me, state.rivals);
 }
 
 function formatTime(seconds) {
@@ -186,7 +186,7 @@ function boardKey(rows) {
   return key;
 }
 
-function drawMinimap(plan, me) {
+function drawMinimap(plan, me, rivals = []) {
   if (!plan) return;
   if (hudState.map !== plan) {
     hudState.map = plan;
@@ -202,7 +202,8 @@ function drawMinimap(plan, me) {
   const srcR = MAP_VIEW_RADIUS * layerScale;
   const sx = mapLayer.width / 2 + focusX * layerScale;
   const sy = mapLayer.height / 2 + focusZ * layerScale;
-  const dot = `${Math.round(sx)}:${Math.round(sy)}:${me ? me.color : ""}`;
+  const rivalKey = rivals.map((rival) => `${Math.round(rival.x)}:${Math.round(rival.z)}`).join(",");
+  const dot = `${Math.round(sx)}:${Math.round(sy)}:${me ? me.color : ""}:${rivalKey}`;
   if (dot === hudState.dot) return;
   hudState.dot = dot;
   mapCtx.clearRect(0, 0, size, size);
@@ -214,6 +215,15 @@ function drawMinimap(plan, me) {
   mapCtx.clip();
   mapCtx.imageSmoothingEnabled = true;
   mapCtx.drawImage(mapLayer, sx - srcR, sy - srcR, srcR * 2, srcR * 2, 0, 0, size, size);
+  for (const rival of rivals) {
+    const px = center + ((rival.x - focusX) / MAP_VIEW_RADIUS) * (size / 2);
+    const py = center + ((rival.z - focusZ) / MAP_VIEW_RADIUS) * (size / 2);
+    if (Math.hypot(px - center, py - center) > reach - 4) continue;
+    mapCtx.beginPath();
+    mapCtx.arc(px, py, 4, 0, Math.PI * 2);
+    mapCtx.fillStyle = rival.color;
+    mapCtx.fill();
+  }
   if (me) {
     mapCtx.beginPath();
     mapCtx.arc(center, center, 6, 0, Math.PI * 2);

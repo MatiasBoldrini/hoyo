@@ -51,6 +51,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
   let inGame = false;
   let startTimer = 0;
   let expiryTimer = 0;
+  let statusPoll = 0;
 
   function showError(error) {
     errorNode.textContent = messageFrom(error);
@@ -121,7 +122,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
       name.textContent = person.name || "Jugador";
       const role = document.createElement("em");
       role.textContent =
-        person.id === room.hostId ? "ANFITRIÓN" : person.id === store?.userId ? "VOS" : "LISTO";
+        person.id === room.hostId ? "Anfitrión" : person.id === store?.userId ? "Vos" : "Listo";
       item.append(swatch, name, role);
       peopleNode.append(item);
     }
@@ -143,7 +144,26 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     renderExpiry();
   }
 
+  function watchLobby() {
+    window.clearInterval(statusPoll);
+    statusPoll = window.setInterval(() => {
+      const current = room;
+      if (!current || current.status !== "lobby" || !store) return;
+      store
+        .find(current.code)
+        .then((next) => {
+          if (!next || room?.id !== current.id || room.status !== "lobby") return;
+          if (next.status === "lobby") return;
+          room = next;
+          renderRoom();
+          scheduleStart();
+        })
+        .catch(() => {});
+    }, 1000);
+  }
+
   function scheduleStart() {
+    if (room?.status === "playing") window.clearInterval(statusPoll);
     if (
       !room ||
       room.status !== "playing" ||
@@ -216,6 +236,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     history.replaceState(null, "", new URL(inviteUrl(room.code)));
     renderRoom();
     scheduleStart();
+    watchLobby();
     window.clearInterval(expiryTimer);
     expiryTimer = window.setInterval(renderExpiry, 1000);
   }
@@ -259,8 +280,10 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
   async function leave({ showMenu = true } = {}) {
     window.clearTimeout(startTimer);
     window.clearInterval(expiryTimer);
+    window.clearInterval(statusPoll);
     startTimer = 0;
     expiryTimer = 0;
+    statusPoll = 0;
     if (connection) await connection.leave();
     connection = null;
     room = null;
@@ -296,9 +319,9 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     if (!room) return;
     try {
       await navigator.clipboard.writeText(inviteUrl(room.code));
-      copyButton.textContent = "¡COPIADO!";
+      copyButton.textContent = "Copiado";
       window.setTimeout(() => {
-        copyButton.textContent = "COPIAR LINK";
+        copyButton.textContent = "Copiar link";
       }, 1600);
     } catch {
       window.prompt("Copiá este link para invitar:", inviteUrl(room.code));
@@ -311,6 +334,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     statusNode.textContent = "Iniciando…";
     try {
       room = await store.start(room.id);
+      connection?.sendRoom(room);
       renderRoom();
       scheduleStart();
     } catch (error) {

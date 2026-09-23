@@ -1623,7 +1623,7 @@ export async function mountGame(canvas, hooks) {
     probeForce = 0;
     let eaterDist = Infinity;
     for (const hole of holes) {
-      if (!hole.alive) continue;
+      if (!hole.alive || hole.remote) continue;
       const dx = hole.x - obj.x;
       const dz = hole.z - obj.z;
       const near = hole.radius + obj.eatR;
@@ -1873,7 +1873,9 @@ export async function mountGame(canvas, hooks) {
     for (const hunter of holes) {
       if (!hunter.alive) continue;
       for (const prey of holes) {
-        if (prey === hunter || !prey.alive || prey.invuln > 0) continue;
+        // Un hoyo remoto lo simula su dueño. Comerlo acá se revive con el
+        // siguiente paquete y la masa se suma en cada frame.
+        if (prey === hunter || !prey.alive || prey.invuln > 0 || prey.remote) continue;
         if (hunter.radius < prey.radius * 1.14) continue;
         const d = Math.hypot(prey.x - hunter.x, prey.z - hunter.z);
         if (d > hunter.radius * 0.62) continue;
@@ -2062,6 +2064,19 @@ export async function mountGame(canvas, hooks) {
       z: player.z,
       color: `#${player.color.toString(16).padStart(6, "0")}`,
     };
+  }
+
+  function rivalMarks() {
+    const marks = [];
+    for (const hole of holes) {
+      if (!hole.alive || hole.player) continue;
+      marks.push({
+        x: hole.x,
+        z: hole.z,
+        color: `#${hole.color.toString(16).padStart(6, "0")}`,
+      });
+    }
+    return marks;
   }
 
   function boardRows() {
@@ -2347,6 +2362,7 @@ export async function mountGame(canvas, hooks) {
         rows: boardRows(),
         map: mapPlan,
         me: playerMark(),
+        rivals: rivalMarks(),
       });
     }
     requestAnimationFrame(frameWrapped);

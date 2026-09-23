@@ -188,6 +188,10 @@ export async function connectPartyStore() {
           callbacks.onPeople?.(people);
         })
         .on("broadcast", { event: "game-state" }, ({ payload }) => callbacks.onGameState?.(payload))
+        .on("broadcast", { event: "room" }, ({ payload }) => {
+          if (!payload || payload.id !== room.id) return;
+          callbacks.onRoom?.(payload);
+        })
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "party_rooms", filter: `id=eq.${room.id}` },
@@ -228,6 +232,9 @@ export async function connectPartyStore() {
       return {
         sendGameState(payload) {
           return channel.send({ type: "broadcast", event: "game-state", payload });
+        },
+        sendRoom(nextRoom) {
+          return channel.send({ type: "broadcast", event: "room", payload: nextRoom });
         },
         async leave() {
           await channel.untrack();

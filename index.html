@@ -61,56 +61,61 @@
     <section id="party" class="party-panel" hidden aria-label="Modo party">
       <div class="party-card">
         <header class="party-header">
-          <button id="party-close" type="button" aria-label="Volver al menú">←</button>
-          <div><p>HOYO</p><h2>MODO PARTY</h2></div>
-          <span>EN VIVO</span>
+          <button id="party-close" type="button" aria-label="Volver al menú">
+            <svg viewBox="0 0 12 20" width="10" height="18" aria-hidden="true">
+              <path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <h2>Party</h2>
         </header>
 
         <form id="party-setup">
-          <p class="party-lead">Armá una partida privada. El link de invitación dura una hora.</p>
-          <label class="party-setting">
-            <span><b>Duración</b><small>Tiempo de cada partida</small></span>
-            <select id="party-duration">
-              <option value="60">1 minuto</option>
-              <option value="120" selected>2 minutos</option>
-              <option value="180">3 minutos</option>
-              <option value="300">5 minutos</option>
-            </select>
-          </label>
-          <label class="party-setting">
-            <span><b>Bots</b><small>Además de los jugadores humanos</small></span>
-            <select id="party-bots">
-              <option value="0">Sin bots</option>
-              <option value="1">1 bot</option>
-              <option value="3" selected>3 bots</option>
-              <option value="5">5 bots</option>
-              <option value="7">7 bots</option>
-            </select>
-          </label>
-          <label class="party-setting">
-            <span><b>Objetos extra</b><small>Repone objetos durante la partida</small></span>
-            <select id="party-objects">
-              <option value="0">Normal</option>
-              <option value="1" selected>Abundante</option>
-              <option value="2">Caos</option>
-            </select>
-          </label>
+          <p class="party-lead">Una sala privada. El link dura una hora.</p>
+          <div class="party-group">
+            <label class="party-setting">
+              <span>Duración</span>
+              <select id="party-duration">
+                <option value="60">1 minuto</option>
+                <option value="120" selected>2 minutos</option>
+                <option value="180">3 minutos</option>
+                <option value="300">5 minutos</option>
+              </select>
+            </label>
+            <label class="party-setting">
+              <span>Bots</span>
+              <select id="party-bots">
+                <option value="0">Sin bots</option>
+                <option value="1">1 bot</option>
+                <option value="3" selected>3 bots</option>
+                <option value="5">5 bots</option>
+                <option value="7">7 bots</option>
+              </select>
+            </label>
+            <label class="party-setting">
+              <span>Objetos</span>
+              <select id="party-objects">
+                <option value="0">Normal</option>
+                <option value="1" selected>Abundante</option>
+                <option value="2">Caos</option>
+              </select>
+            </label>
+          </div>
           <p id="party-error" class="party-error" hidden></p>
-          <button id="party-create" class="party-primary" type="submit">CREAR PARTY</button>
+          <button id="party-create" class="party-primary" type="submit">Crear party</button>
         </form>
 
         <div id="party-lobby" hidden>
           <p class="party-kicker">Código de invitación</p>
           <div class="party-code-row">
             <strong id="party-code">--------</strong>
-            <button id="party-copy" type="button">COPIAR LINK</button>
+            <button id="party-copy" type="button">Copiar link</button>
           </div>
           <p id="party-expiry" class="party-expiry"></p>
           <div id="party-summary" class="party-summary"></div>
           <div class="party-players-head"><b>Jugadores</b><span id="party-count">0/8</span></div>
           <ul id="party-people" class="party-people"></ul>
           <p id="party-status" class="party-status" aria-live="polite">Esperando al anfitrión…</p>
-          <button id="party-start" class="party-primary" type="button" hidden>EMPEZAR PARTIDA</button>
+          <button id="party-start" class="party-primary" type="button" hidden>Empezar</button>
         </div>
       </div>
     </section>
