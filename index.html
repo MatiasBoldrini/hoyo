@@ -61,6 +61,11 @@
         <button id="explore-directory-open" class="explore-directory-open" type="button">
           <span>⌕</span> Sponsors <em id="explore-directory-count">0</em>
         </button>
+        <div class="explore-account">
+          <span id="explore-session" aria-live="polite">Sin sesión</span>
+          <button id="explore-logout" type="button" hidden>Cerrar sesión</button>
+        </div>
+        <div class="explore-connection"><i></i><span id="explore-connection-text">Conectando…</span></div>
       </header>
 
       <div id="explore-help" class="explore-help">
@@ -114,11 +119,22 @@
               <span id="owner-link-text">Visitar sitio</span>
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 10.5l5-5m-4 0h4v4" /></svg>
             </a>
-            <p class="listing-note">Este espacio ya tiene dueño. Seguí recorriendo la ciudad para encontrar uno libre.</p>
+            <p class="listing-note">Podés recorrer otros espacios o iniciar un reemplazo con checkout seguro.</p>
           </section>
 
           <form id="explore-form" class="listing-form" novalidate>
             <p class="listing-section-title">Tu marca</p>
+
+            <section id="explore-auth-form" class="explore-auth" hidden>
+              <p><b>Guardá tu identidad</b><small>Te enviaremos un Magic Link. Iniciá sesión antes de reclamar o pagar.</small></p>
+              <label class="listing-field">
+                <span class="listing-label">Email</span>
+                <input id="explore-auth-email" type="email" autocomplete="email" required placeholder="vos@empresa.com" />
+              </label>
+              <button id="explore-auth-send" class="text-button" type="button">Enviar Magic Link</button>
+              <p id="explore-auth-status" class="listing-sync" role="status" aria-live="polite"></p>
+            </section>
+
 
             <div class="designer">
               <canvas id="editor-design-canvas" width="640" height="280" aria-label="Ubicación de la marca sobre la superficie"></canvas>
@@ -171,6 +187,9 @@
             <p class="checkout-total"><small id="checkout-label">Precio</small><b id="checkout-price">US$ 0</b></p>
             <button id="explore-save" class="checkout-button" type="submit" form="explore-form">Reservar espacio</button>
           </div>
+          <p id="claim-status" class="claim-status" aria-live="polite">
+            Iniciá sesión para consultar si conservás tu claim gratis vitalicio.
+          </p>
           <p id="listing-sync" class="listing-sync">Tu marca aparece para todos los jugadores al instante.</p>
         </footer>
       </aside>

@@ -1,169 +1,239 @@
 import { createClient } from "@supabase/supabase-js";
+import { SPONSOR_CONTRACT } from "./sponsor-contract.js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
 export const sponsorStoreEnabled = Boolean(url && key);
 
 const supabase = sponsorStoreEnabled
   ? createClient(url, key, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-      },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })
   : null;
 
-let userId = "";
+const DEFAULT_DESIGN = Object.freeze({ x: 0.5, y: 0.5, scale: 0.46, rotation: 0 });
 
-const BASE_COLUMNS = "id,asset_id,company,target_url,logo_path,logo_url,color,price_usd,owner_id,created_at,updated_at";
-// Until the design migration runs remotely, keep syncing brands without their placement.
-let designColumn = true;
-const columns = () => (designColumn ? `${BASE_COLUMNS},design` : BASE_COLUMNS);
-const missingDesignColumn = (error) =>
-  designColumn && ["42703", "PGRST204"].includes(error?.code) && /design/.test(error.message || "");
-const LOGO_BUCKET = "sponsor-logos";
-const DEFAULT_DESIGN = { x: 0.5, y: 0.5, scale: 0.46, rotation: 0 };
+function messageFor(error) {
+  const domainConflict = [error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .some((value) => /target_domain|active_target_domain|dominio/i.test(value));
+  if (error?.code === "23505" && domainConflict) {
+    return "Ese dominio ya está asociado a otra marca. Cada dominio puede aparecer una sola vez.";
+  }
+  if (error?.code === "23505") {
+    return "Ese lugar cambió de estado. Actualizá la ciudad e intentá de nuevo.";
+  }
+  if (error?.code === "42501") return "Tu sesión no está autorizada para realizar esa operación.";
+  return error?.message || "El servidor no pudo completar la operación.";
+}
 
-function fromRow(row) {
+function throwIf(error) {
+  if (error) throw new Error(messageFor(error));
+}
+
+function fromRow(row, logoUrls) {
+  const logoPath = row.logo_path || "";
   return {
     id: row.id,
     itemId: row.asset_id,
     company: row.company,
     url: row.target_url || "",
-    logo: row.logo_url || "",
-    logoPath: row.logo_path || "",
+    logo: logoUrls.get(logoPath) || "",
+    logoPath,
     color: row.color,
     animation: "fixed",
     design: row.design || { ...DEFAULT_DESIGN },
-    price: row.price_usd,
-    ownerId: row.owner_id,
-    mine: row.owner_id === userId,
+    mine: row.mine === true,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    nextPrice: Number(row.next_price_cents || 0) / 100,
+    canTakeover: row.can_takeover !== false,
+    assetVersion: row.asset_version ?? null,
+    brandingStatus: row.branding_status || "",
   };
 }
 
-async function removeLogo(path) {
-  if (!path) return;
-  const { error } = await supabase.storage.from(LOGO_BUCKET).remove([path]);
-  if (error) console.warn("No se pudo borrar el logo anterior", error);
-}
-
-async function requireSession() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  let user = sessionData.session?.user;
-  if (!user) {
-    const { data, error } = await supabase.auth.signInAnonymously();
-    if (error) throw error;
-    user = data.user;
+async function signedLogoUrls(rows) {
+  const paths = [...new Set(rows.map((row) => row.logo_path).filter(Boolean))];
+  const urls = new Map();
+  if (paths.length === 0) return urls;
+  const { data, error } = await supabase.storage
+    .from(SPONSOR_CONTRACT.logoBucket)
+    .createSignedUrls(paths, 3600);
+  throwIf(error);
+  for (const item of data || []) {
+    if (item.path && item.signedUrl && !item.error) urls.set(item.path, item.signedUrl);
   }
-  if (!user) throw new Error("Supabase no pudo crear la sesión anónima.");
-  userId = user.id;
-  return user;
+  return urls;
 }
 
-async function dataUrlToBlob(dataUrl) {
-  const response = await fetch(dataUrl);
-  return response.blob();
+async function session() {
+  const { data, error } = await supabase.auth.getSession();
+  throwIf(error);
+  return data.session;
+}
+
+async function requireUser() {
+  const current = await session();
+  if (!current?.user || current.user.is_anonymous) {
+    throw new Error("Iniciá sesión con tu email para continuar.");
+  }
+  return current.user;
+}
+
+function updateBrandingPayload(record, item, logoPath) {
+  return {
+    p_asset_id: item.id,
+    p_company: record.company,
+    p_target_url: record.url || null,
+    p_logo_path: logoPath || null,
+    p_color: record.color,
+    p_animation: "fixed",
+    p_design: record.design || DEFAULT_DESIGN,
+  };
+}
+
+function validCheckoutUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      SPONSOR_CONTRACT.checkoutHosts.some(
+        (host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function connectSponsorStore() {
   if (!supabase) return null;
-  await requireSession();
   return {
-    userId,
-    async list() {
-      const { data, error } = await supabase
-        .from("sponsorships")
-        .select(columns())
-        .in("status", ["active", "pending"])
-        .order("created_at", { ascending: true });
-      if (missingDesignColumn(error)) {
-        designColumn = false;
-        return this.list();
-      }
-      if (error) throw error;
-      return data.map(fromRow);
+    getSession: session,
+    onAuthChange(callback) {
+      const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => callback(nextSession));
+      return () => data.subscription.unsubscribe();
     },
-    async save(record, item, previous = null) {
-      let logoPath = record.logo ? record.logoPath || "" : "";
-      let logoUrl = record.logo && !record.logo.startsWith("data:") ? record.logo : "";
-      if (record.logo?.startsWith("data:")) {
-        const blob = await dataUrlToBlob(record.logo);
-        logoPath = `${userId}/${item.id}.webp`;
-        const { error: uploadError } = await supabase.storage
-          .from(LOGO_BUCKET)
-          .upload(logoPath, blob, { contentType: "image/webp", upsert: true });
-        if (uploadError) throw uploadError;
-        // The path is stable per asset, so the version keeps browsers from showing a stale logo.
-        const { publicUrl } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(logoPath).data;
-        logoUrl = `${publicUrl}?v=${Date.now()}`;
+    async sendMagicLink(email) {
+      const redirectTo = new URL(window.location.href);
+      redirectTo.search = "";
+      redirectTo.hash = "";
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: redirectTo.href, shouldCreateUser: true },
+      });
+      throwIf(error);
+    },
+    async logout() {
+      const { error } = await supabase.auth.signOut();
+      throwIf(error);
+    },
+    async getClaimStatus() {
+      if (!SPONSOR_CONTRACT.rpc.claimStatus) return { available: null };
+      await requireUser();
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.claimStatus);
+      throwIf(error);
+      const value = Array.isArray(data) ? data[0] : data;
+      if (typeof value === "boolean") return { available: value };
+      if (typeof value?.available === "boolean") return { available: value.available };
+      if (typeof value?.free_claim_used === "boolean") {
+        return { available: !value.free_claim_used };
       }
-      const payload = {
-        asset_id: item.id,
-        category: item.category,
-        asset_name: item.name,
-        company: record.company,
-        target_url: record.url || null,
-        logo_path: logoPath || null,
-        logo_url: logoUrl || null,
-        color: record.color,
-        animation: "fixed",
-        design: record.design || DEFAULT_DESIGN,
-        price_usd: item.price,
-        owner_id: userId,
-        status: "active",
-      };
-      const upsert = () =>
-        supabase
-          .from("sponsorships")
-          .upsert(designColumn ? payload : { ...payload, design: undefined }, { onConflict: "asset_id" })
-          .select(columns())
+      return { available: null };
+    },
+    async list() {
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.list);
+      throwIf(error);
+      const rows = data || [];
+      const logoUrls = await signedLogoUrls(rows);
+      return rows.map((row) => fromRow(row, logoUrls));
+    },
+    async uploadLogo(dataUrl, item) {
+      if (!dataUrl?.startsWith("data:")) return "";
+      const user = await requireUser();
+      const blob = await (await fetch(dataUrl)).blob();
+      const safeAsset = item.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const path = `${user.id}/${safeAsset}/${crypto.randomUUID()}.webp`;
+      const { error } = await supabase.storage
+        .from(SPONSOR_CONTRACT.logoBucket)
+        .upload(path, blob, { contentType: "image/webp", upsert: false });
+      throwIf(error);
+      return path;
+    },
+    async save(record, item) {
+      await requireUser();
+      const logoPath = record.logo?.startsWith("data:")
+        ? await this.uploadLogo(record.logo, item)
+        : record.logoPath || "";
+      const { error } = await supabase.rpc(
+        SPONSOR_CONTRACT.rpc.updateBranding,
+        updateBrandingPayload(record, item, logoPath),
+      );
+      throwIf(error);
+      const row = (await this.list()).find((candidate) => candidate.itemId === item.id);
+      if (!row) throw new Error("El servidor no devolvió la marca confirmada.");
+      return row;
+    },
+    async acquire(record, item, currentRecord) {
+      await requireUser();
+      const logoPath = record.logo?.startsWith("data:")
+        ? await this.uploadLogo(record.logo, item)
+        : record.logoPath || "";
+      let assetVersion = currentRecord?.assetVersion ?? null;
+      if (assetVersion === null) {
+        const { data: asset, error: assetError } = await supabase
+          .from("market_assets")
+          .select("version")
+          .eq("id", item.id)
           .single();
-      let { data, error } = await upsert();
-      if (missingDesignColumn(error)) {
-        designColumn = false;
-        ({ data, error } = await upsert());
+        throwIf(assetError);
+        assetVersion = asset.version;
       }
-      if (error) {
-        const domainConflict = [error.message, error.details, error.hint]
-          .filter(Boolean)
-          .some((value) => /target_domain|active_target_domain/i.test(value));
-        if (error.code === "23505" && domainConflict) {
-          throw new Error("Ese dominio ya está asociado a otra marca. Cada dominio puede aparecer una sola vez.");
-        }
-        if (error.code === "23505" || error.code === "42501") {
-          throw new Error("Otra marca reservó este espacio hace un momento. Probá con otro.");
-        }
-        throw error;
+      const retryKey = `hoyo-checkout:${item.id}`;
+      const idempotencyKey = sessionStorage.getItem(retryKey) || crypto.randomUUID();
+      sessionStorage.setItem(retryKey, idempotencyKey);
+      const { data, error } = await supabase.functions.invoke(SPONSOR_CONTRACT.functions.checkout, {
+        body: {
+          asset_id: item.id,
+          company: record.company,
+          target_url: record.url || null,
+          logo_path: logoPath || null,
+          color: record.color,
+          animation: "fixed",
+          design: record.design || DEFAULT_DESIGN,
+          idempotency_key: idempotencyKey,
+          expected_asset_version: assetVersion,
+          success_url: `${location.origin}${location.pathname}?checkout=returned`,
+          cancel_url: `${location.origin}${location.pathname}?checkout=cancelled`,
+        },
+      });
+      throwIf(error);
+      sessionStorage.removeItem(retryKey);
+      if (data?.status === "completed" && data?.kind === "free_claim") return "";
+      if (!validCheckoutUrl(data?.checkoutUrl)) {
+        throw new Error("El servidor devolvió una URL de pago no permitida.");
       }
-      if (previous?.logoPath && previous.logoPath !== logoPath) await removeLogo(previous.logoPath);
-      return fromRow(designColumn ? data : { ...data, design: record.design });
+      return data.checkoutUrl;
     },
     async remove(record) {
-      const { error } = await supabase
-        .from("sponsorships")
-        .delete()
-        .eq("asset_id", record.itemId)
-        .eq("owner_id", userId);
-      if (error) throw error;
-      await removeLogo(record.logoPath);
+      await requireUser();
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.release, {
+        p_asset_id: record.itemId,
+        p_reason: "released",
+      });
+      throwIf(error);
+      if (data !== true) throw new Error("El servidor no confirmó la liberación del espacio.");
     },
     subscribe(onChange) {
       const channel = supabase
         .channel("public-sponsorships")
         .on(
           "postgres_changes",
-          { event: "*", schema: "public", table: "sponsorships" },
-          () => onChange(),
+          { event: "*", schema: "public", table: SPONSOR_CONTRACT.table },
+          onChange,
         )
         .subscribe();
-      return () => {
-        supabase.removeChannel(channel);
-      };
+      return () => supabase.removeChannel(channel);
     },
   };
 }

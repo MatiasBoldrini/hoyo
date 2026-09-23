@@ -292,6 +292,17 @@ message_service_sid = ""
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
 auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 
+# Checkout requires a Supabase access token. The webhook is public at the
+# gateway because providers authenticate with a signature over the raw body.
+[functions.create-payment-checkout]
+verify_jwt = true
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.payment-paypal-capture]
+verify_jwt = false
+
 # Multi-factor-authentication is available to Supabase Pro plan.
 [auth.mfa]
 # Control how many MFA factors can be enrolled at once per user.

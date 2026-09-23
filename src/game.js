@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
+import marketCatalog from "./market-catalog.json";
 import { loadProps, makeProp, propMaterials } from "./props.js";
 import { createSfx } from "./audio.js";
 
@@ -326,6 +327,16 @@ function marketPrice(category, x, z, kind = "") {
   return Math.round((base + centrality * base * 1.35 + premium) / 10) * 10;
 }
 
+function marketCoordinate(value) {
+  const quantized = Math.round(value * 1000);
+  return `${quantized < 0 ? "m" : "p"}${Math.abs(quantized)}`;
+}
+
+function stableMarketId(category, kind, x, z) {
+  return `${category}-${kind}-${marketCoordinate(x)}-${marketCoordinate(z)}`;
+}
+
+
 function assetName(kind, index) {
   const serial = String(index + 1).padStart(2, "0");
   const names = {
@@ -341,18 +352,21 @@ function assetName(kind, index) {
 function buildMarketInventory(objects) {
   const items = [];
   const counts = { building: 0, place: 0 };
+  const catalogNames = new Map(marketCatalog.items);
   objects.forEach((object, objectIndex) => {
     if (!MARKET_KINDS.has(object.kind)) return;
     const category = MARKET_BUILDINGS.has(object.kind) ? "building" : "place";
     const index = counts[category]++;
     const zone = marketZone(object.x, object.z);
     const medallion = object.kind === "fountain";
+    const id = stableMarketId(category, object.kind, object.x, object.z);
     items.push({
-      id: `asset-${objectIndex}`,
+      id,
+      legacyId: `asset-${objectIndex}`,
       shortId: `${category === "building" ? "ED" : "EP"}-${String(index + 1).padStart(3, "0")}`,
       category,
       kind: object.kind,
-      name: assetName(object.kind, index),
+      name: catalogNames.get(id) || assetName(object.kind, index),
       description:
         category === "building"
           ? "Tu identidad en la fachada de uno de los edificios que protagonizan la ciudad."
@@ -369,6 +383,10 @@ function buildMarketInventory(objects) {
       target: object,
     });
   });
+  const actualCatalog = items.map(({ id, name }) => [id, name]);
+  if (JSON.stringify(actualCatalog) !== JSON.stringify(marketCatalog.items)) {
+    throw new Error("Catálogo de marketplace desincronizado con el inventario curado");
+  }
   return items;
 }
 
