@@ -116,7 +116,6 @@ export async function mountCityExplore(game) {
   const notice = $("#explore-notice");
   const sessionLabel = $("#explore-session");
   const logoutButton = $("#explore-logout");
-  const connection = $("#explore-connection-text");
 
   const directory = $("#explore-directory");
   const directoryOpen = $("#explore-directory-open");
@@ -510,7 +509,6 @@ export async function mountCityExplore(game) {
     loadDraft();
     panel.hidden = false;
     panel.querySelector(".listing-scroll").scrollTop = 0;
-    if (document.pointerLockElement === canvas) document.exitPointerLock();
     notice.classList.add("hidden");
     if (stateFor(recordFor(item)) === "taken") game.setBrandings(records);
     else renderDraft();
@@ -617,16 +615,14 @@ export async function mountCityExplore(game) {
   function openDirectory() {
     if (root.hidden) return;
     if (!panel.hidden) closeEditor();
-    if (document.pointerLockElement === canvas) document.exitPointerLock();
     directory.hidden = false;
     renderDirectory();
     requestAnimationFrame(() => directorySearch.focus());
   }
 
-  function closeDirectory({ resume = true } = {}) {
+  function closeDirectory() {
     directory.hidden = true;
     directorySearch.blur();
-    if (resume) requestMouseLook();
   }
 
   function openExplore() {
@@ -636,14 +632,12 @@ export async function mountCityExplore(game) {
     notice.classList.remove("hidden");
     game.beginExplore();
     canvas.focus();
-    requestMouseLook();
   }
 
   function closeExplore() {
     closeDirectory({ resume: false });
     closeEditor();
     document.body.classList.remove("explore-hover");
-    if (document.pointerLockElement === canvas) document.exitPointerLock();
     game.clearExploreHover();
     root.hidden = true;
     menu.hidden = false;
@@ -711,7 +705,8 @@ export async function mountCityExplore(game) {
     try {
       await store?.logout();
     } catch (error) {
-      connection.textContent = error.message || "No pudimos cerrar la sesión.";
+      notice.textContent = error.message || "No pudimos cerrar la sesión.";
+      notice.classList.remove("hidden");
     } finally {
       logoutButton.disabled = false;
     }
@@ -724,7 +719,6 @@ export async function mountCityExplore(game) {
   directorySearch.addEventListener("input", renderDirectory);
   panelClose.addEventListener("click", () => {
     closeEditor();
-    requestMouseLook();
   });
   $("#explore-help-close").addEventListener("click", () => {
     help.hidden = true;
@@ -773,48 +767,8 @@ export async function mountCityExplore(game) {
     game.clearExploreHover();
   }
 
-  function requestMouseLook() {
-    if (
-      root.hidden ||
-      !panel.hidden ||
-      document.pointerLockElement === canvas ||
-      typeof canvas.requestPointerLock !== "function"
-    ) {
-      return false;
-    }
-    const request = canvas.requestPointerLock?.();
-    request?.catch?.(() => {});
-    return true;
-  }
-
-  function centerExplorePointer() {
-    const rect = canvas.getBoundingClientRect();
-    pointerX = rect.left + rect.width / 2;
-    pointerY = rect.top + rect.height / 2;
-  }
-
-  document.addEventListener("pointerlockchange", () => {
-    pointerDown = false;
-    pointerMoved = false;
-    if (document.pointerLockElement !== canvas || root.hidden || !panel.hidden) {
-      stopExplorePointer();
-      return;
-    }
-    pointerInside = true;
-    centerExplorePointer();
-    if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
-  });
-
   canvas.addEventListener("pointerdown", (event) => {
     if (root.hidden || event.button !== 0) return;
-    if (
-      panel.hidden &&
-      event.pointerType !== "touch" &&
-      document.pointerLockElement !== canvas &&
-      requestMouseLook()
-    ) {
-      return;
-    }
     pointerDown = true;
     pointerMoved = false;
     pointerStartedWhileEditing = !panel.hidden;
@@ -822,18 +776,10 @@ export async function mountCityExplore(game) {
     pointerDownY = event.clientY;
     pointerX = event.clientX;
     pointerY = event.clientY;
-    if (document.pointerLockElement !== canvas) canvas.setPointerCapture(event.pointerId);
+    canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
     if (root.hidden) return;
-    if (document.pointerLockElement === canvas) {
-      pointerInside = true;
-      centerExplorePointer();
-      if (pointerDown && Math.abs(event.movementX) + Math.abs(event.movementY) > 4) pointerMoved = true;
-      game.rotateExplore(event.movementX, event.movementY);
-      if (!hoverFrame) hoverFrame = requestAnimationFrame(refreshExploreHover);
-      return;
-    }
     const previousX = pointerX;
     const previousY = pointerY;
     pointerInside = true;
@@ -844,7 +790,7 @@ export async function mountCityExplore(game) {
     }
     if (pointerDown && pointerMoved) {
       if (panel.hidden) game.rotateExplore(pointerX - previousX, pointerY - previousY);
-      else game.orbitExplore(pointerX - previousX);
+      else game.orbitExplore(pointerX - previousX, pointerY - previousY);
       return;
     }
     if (!panel.hidden) return;
@@ -859,7 +805,6 @@ export async function mountCityExplore(game) {
     if (pointerMoved) return;
     if (wasEditing) {
       closeEditor();
-      requestMouseLook();
       return;
     }
     const item = game.pickExploreItem(pointerX, pointerY);
@@ -873,7 +818,7 @@ export async function mountCityExplore(game) {
     }
   });
   canvas.addEventListener("pointerleave", () => {
-    if (root.hidden || document.pointerLockElement === canvas) return;
+    if (root.hidden || pointerDown) return;
     stopExplorePointer();
   });
   canvas.addEventListener("pointercancel", () => {
@@ -1053,7 +998,6 @@ export async function mountCityExplore(game) {
   try {
     const { connectSponsorStore, sponsorStoreEnabled } = await import("./sponsor-store.js");
     if (!sponsorStoreEnabled) {
-      connection.textContent = "Sin servidor · guardado en este navegador";
       syncLine.textContent = SYNC_COPY.local;
       return;
     }
@@ -1061,7 +1005,6 @@ export async function mountCityExplore(game) {
     renderSession(await store.getSession());
     await syncRecords();
     syncLine.textContent = SYNC_COPY.online;
-    connection.textContent = "Ciudad sincronizada";
     store.onAuthChange((nextSession) => {
       renderSession(nextSession);
       syncRecords().catch(() => {});
@@ -1072,7 +1015,6 @@ export async function mountCityExplore(game) {
   } catch (error) {
     console.warn("Supabase no disponible; usando modo local", error);
     store = null;
-    connection.textContent = "Sin conexión · guardado en este navegador";
     syncLine.textContent = SYNC_COPY.local;
   }
 

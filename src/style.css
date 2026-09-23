@@ -1947,14 +1947,14 @@ h2 {
 .explore-close {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 14px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
   color: white;
-  font: 900 20px/1 inherit;
-  background: rgba(15, 23, 42, 0.74);
-  backdrop-filter: blur(12px);
+  font: 300 28px/1 inherit;
+  background: rgba(20, 24, 32, 0.42);
+  backdrop-filter: blur(18px);
   cursor: pointer;
 }
 
@@ -1962,12 +1962,12 @@ h2 {
   display: flex;
   align-items: center;
   gap: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 15px;
-  padding: 7px 12px 7px 7px;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px 6px 6px;
   color: white;
-  background: rgba(15, 23, 42, 0.74);
-  backdrop-filter: blur(12px);
+  background: rgba(20, 24, 32, 0.42);
+  backdrop-filter: blur(18px);
 }
 
 .explore-brand > span {
@@ -1990,15 +1990,16 @@ h2 {
 }
 
 .explore-brand b {
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .explore-brand small {
   margin-top: 1px;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 10px;
-  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .explore-help {
@@ -2009,12 +2010,12 @@ h2 {
   align-items: center;
   gap: 18px;
   transform: translateX(-50%);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 16px;
-  padding: 10px 12px;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
   color: white;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   background: rgba(15, 23, 42, 0.78);
   backdrop-filter: blur(12px);
@@ -2033,14 +2034,14 @@ h2 {
 }
 
 .explore-help kbd {
-  min-width: 21px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  min-width: 18px;
+  border: 0;
   border-radius: 5px;
   padding: 3px 5px;
   color: white;
-  font: 900 10px/1 inherit;
+  font: 500 11px/1 inherit;
   text-align: center;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .explore-help button {
@@ -2109,12 +2110,12 @@ h2 {
   top: calc(76px + env(safe-area-inset-top));
   transform: translateX(-50%);
   border-radius: 999px;
-  padding: 8px 13px;
+  padding: 8px 14px;
   color: white;
-  font-size: 11px;
-  font-weight: 800;
-  background: rgba(15, 23, 42, 0.68);
-  backdrop-filter: blur(9px);
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(20, 24, 32, 0.42);
+  backdrop-filter: blur(18px);
   transition: opacity 0.2s ease;
 }
 
@@ -2124,29 +2125,27 @@ h2 {
 
 /* Ficha del espacio: se lee como un aviso inmobiliario, con el precio y la acción siempre a mano. */
 .listing {
-  --paper: #fbfaf8;
-  --text: #17181c;
-  --text-2: #55585f;
-  --text-3: #8b8e95;
-  --line: rgba(23, 24, 28, 0.09);
-  --brand: #2f9e6b;
+  --paper: #fff;
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #86868b;
+  --line: rgba(0, 0, 0, 0.08);
+  --brand: #0071e3;
   position: absolute;
   top: calc(72px + env(safe-area-inset-top));
   right: 16px;
   display: flex;
   flex-direction: column;
-  width: min(380px, calc(100vw - 32px));
+  width: min(400px, calc(100vw - 32px));
   max-height: calc(100dvh - 88px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow: hidden;
-  border: 1px solid rgba(23, 24, 28, 0.06);
-  border-radius: 16px;
+  border: 0;
+  border-radius: 22px;
   color: var(--text);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.4;
   background: var(--paper);
-  box-shadow:
-    0 1px 2px rgba(15, 20, 30, 0.06),
-    0 24px 56px -16px rgba(15, 20, 30, 0.42);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
   color-scheme: light;
   pointer-events: auto;
   touch-action: pan-y;
@@ -2173,7 +2172,7 @@ h2 {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 22px 24px;
+  padding: 26px 28px 28px;
   scrollbar-width: thin;
   scrollbar-color: rgba(23, 24, 28, 0.18) transparent;
 }
@@ -2204,10 +2203,10 @@ h2 {
 }
 
 .listing-head h2 {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
 }
 
 .listing-status {
@@ -2229,8 +2228,7 @@ h2 {
 }
 
 .listing[data-state="available"] .listing-status i {
-  background: #2f9e6b;
-  box-shadow: 0 0 0 3px rgba(47, 158, 107, 0.14);
+  background: #34c759;
 }
 
 .listing[data-state="taken"] .listing-status i {
@@ -2405,18 +2403,15 @@ h2 {
 
 .listing-field > input {
   width: 100%;
-  height: 42px;
-  border: 1px solid rgba(23, 24, 28, 0.14);
-  border-radius: 10px;
-  padding: 0 12px;
+  height: 48px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 14px;
   outline: none;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
-  background: white;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  font-size: 16px;
+  background: #f5f5f7;
 }
 
 .listing-field > input::placeholder {
@@ -2424,8 +2419,7 @@ h2 {
 }
 
 .listing-field > input:focus {
-  border-color: var(--text);
-  box-shadow: 0 0 0 3px rgba(23, 24, 28, 0.07);
+  background: #ededf0;
 }
 
 .listing-error {
@@ -2564,16 +2558,15 @@ h2 {
 
 .listing-note {
   margin-top: 18px;
-  border-radius: 10px;
-  padding: 12px 14px;
   color: var(--text-2);
-  font-size: 12.5px;
-  background: rgba(23, 24, 28, 0.04);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 .listing-footer {
-  border-top: 1px solid var(--line);
-  padding: 14px 22px 16px;
+  border-top: 0;
+  padding: 8px 28px 24px;
   background: var(--paper);
 }
 
@@ -2620,23 +2613,21 @@ h2 {
 
 .checkout-button {
   flex: 0 0 auto;
-  height: 44px;
+  height: 48px;
   border: 0;
-  border-radius: 11px;
-  padding: 0 20px;
+  border-radius: 14px;
+  padding: 0 22px;
   color: white;
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  background: var(--text);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  background: #0071e3;
   cursor: pointer;
-  transition:
-    background 0.15s ease,
-    transform 0.1s ease;
 }
 
 .checkout-button:hover:not(:disabled) {
-  background: #000;
+  background: #0077ed;
 }
 
 .checkout-button:active:not(:disabled) {
@@ -2721,13 +2712,13 @@ h2 {
   align-items: center;
   gap: 7px;
   margin-left: auto;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 13px;
-  padding: 9px 11px;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
   color: white;
-  font: 800 11px/1 inherit;
-  background: rgba(15, 23, 42, 0.74);
-  backdrop-filter: blur(12px);
+  font: 500 13px/1 inherit;
+  background: rgba(20, 24, 32, 0.42);
+  backdrop-filter: blur(18px);
   cursor: pointer;
 }
 
@@ -2747,18 +2738,17 @@ h2 {
   background: rgba(255, 255, 255, 0.16);
 }
 
-.explore-account,
-.explore-connection {
+.explore-account {
   display: flex;
   align-items: center;
-  gap: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 13px;
-  padding: 9px 11px;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
   color: white;
-  font: 750 10px/1.2 inherit;
-  background: rgba(15, 23, 42, 0.74);
-  backdrop-filter: blur(12px);
+  font: 500 13px/1.2 inherit;
+  background: rgba(20, 24, 32, 0.42);
+  backdrop-filter: blur(18px);
 }
 
 .explore-account button {
@@ -2770,19 +2760,12 @@ h2 {
   cursor: pointer;
 }
 
-.explore-connection i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #55d98d;
-}
-
 .explore-auth {
-  margin-bottom: 20px;
-  border: 1px solid rgba(34, 87, 230, 0.18);
-  border-radius: 13px;
-  padding: 14px;
-  background: rgba(34, 87, 230, 0.055);
+  margin-bottom: 24px;
+  border: 0;
+  border-radius: 14px;
+  padding: 16px;
+  background: #f5f5f7;
 }
 
 .explore-auth > p:first-child {
@@ -2810,29 +2793,27 @@ h2 {
 
 /* Directorio: misma ficha clara que el panel, anclada a la izquierda. */
 .directory {
-  --paper: #fbfaf8;
-  --text: #17181c;
-  --text-2: #55585f;
-  --text-3: #8b8e95;
-  --line: rgba(23, 24, 28, 0.09);
+  --paper: #fff;
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #86868b;
+  --line: rgba(0, 0, 0, 0.08);
   position: absolute;
   z-index: 3;
   top: calc(72px + env(safe-area-inset-top));
   left: 16px;
   display: flex;
   flex-direction: column;
-  width: min(360px, calc(100vw - 32px));
+  width: min(380px, calc(100vw - 32px));
   max-height: calc(100dvh - 88px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow: hidden;
-  border: 1px solid rgba(23, 24, 28, 0.06);
-  border-radius: 16px;
-  padding: 18px 18px 8px;
+  border: 0;
+  border-radius: 22px;
+  padding: 26px 22px 12px;
   color: var(--text);
-  font-size: 13px;
+  font-size: 15px;
   background: var(--paper);
-  box-shadow:
-    0 1px 2px rgba(15, 20, 30, 0.06),
-    0 24px 56px -16px rgba(15, 20, 30, 0.42);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
   color-scheme: light;
   pointer-events: auto;
   animation: directory-enter 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -2858,27 +2839,26 @@ h2 {
 
 .directory-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 28px;
   font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
 }
 
 .directory-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
-  border: 1px solid rgba(23, 24, 28, 0.14);
-  border-radius: 10px;
-  padding: 0 12px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 14px;
   color: var(--text-3);
-  background: white;
+  background: #f5f5f7;
 }
 
 .directory-search:focus-within {
-  border-color: var(--text);
-  box-shadow: 0 0 0 3px rgba(23, 24, 28, 0.07);
+  background: #ededf0;
 }
 
 .directory-search input {
@@ -2923,7 +2903,7 @@ h2 {
 }
 
 .directory-entry + .directory-entry {
-  margin-top: 2px;
+  background: linear-gradient(#d2d2d7, #d2d2d7) 60px 0 / calc(100% - 68px) 0.5px no-repeat;
 }
 
 .directory-entry:hover,

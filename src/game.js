@@ -16,10 +16,12 @@ const SEA = 268;
 const SKY = 0x8ec8f8;
 const ROUND = 120;
 const START_R = 0.82;
-const EXPLORE_HEIGHT = 20;
-// Conserva la inclinación de la cámara del juego sin convertir exploración
-// en una cámara de vuelo libre.
-const EXPLORE_PITCH = -0.78;
+const EXPLORE_HEIGHT = 26;
+// Unos 18° bajo el horizonte. Con el campo de 46° el cielo queda en el
+// tercio de arriba y la calle se lee hacia adelante.
+const EXPLORE_PITCH = -0.32;
+const EXPLORE_PITCH_MIN = -1.2;
+const EXPLORE_PITCH_MAX = 0.55;
 // Lo que cae tiene que estar sobre el vacío: el aro cubre hasta ~0.82R y el embudo
 // va de 0.88R arriba a 0.5R en el fondo (ver syncHole y createHole).
 const MOUTH = 0.84;
@@ -1034,6 +1036,8 @@ export async function mountGame(canvas, hooks) {
     resetExploreOutlines();
     phase = "explore";
     viewStale = true;
+    scene.fog.near = 140;
+    scene.fog.far = 380;
     enableShadows();
     followSun(true);
   }
@@ -1041,6 +1045,8 @@ export async function mountGame(canvas, hooks) {
   function endExplore() {
     if (phase !== "explore") return;
     phase = "menu";
+    scene.fog.near = 70;
+    scene.fog.far = 210;
     exploreKeys.clear();
     exploreFocused = null;
     exploreReturning = false;
@@ -2387,23 +2393,32 @@ export async function mountGame(canvas, hooks) {
       if (pressed) exploreKeys.add(code);
       else exploreKeys.delete(code);
     },
-    rotateExplore(deltaX) {
+    rotateExplore(deltaX, deltaY = 0) {
       if (exploreFocused || exploreReturning) return;
-      exploreYaw -= deltaX * 0.0024;
-      explorePitch = EXPLORE_PITCH;
+      exploreYaw -= deltaX * 0.0022;
+      explorePitch = THREE.MathUtils.clamp(
+        explorePitch - deltaY * 0.0022,
+        EXPLORE_PITCH_MIN,
+        EXPLORE_PITCH_MAX,
+      );
     },
-    orbitExplore(deltaX) {
+    orbitExplore(deltaX, deltaY = 0) {
       if (!exploreFocused || exploreReturning) return;
-      const angle = -deltaX * 0.0036;
-      const horizontal = Math.cos(EXPLORE_PITCH);
+      const angle = -deltaX * 0.0032;
       const x = exploreFocusDirection.x;
       const z = exploreFocusDirection.z;
-      exploreFocusDirection.x = x * Math.cos(angle) - z * Math.sin(angle);
-      exploreFocusDirection.z = x * Math.sin(angle) + z * Math.cos(angle);
-      const length = Math.hypot(exploreFocusDirection.x, exploreFocusDirection.z) || 1;
-      exploreFocusDirection.x *= horizontal / length;
-      exploreFocusDirection.z *= horizontal / length;
-      exploreFocusDirection.y = -Math.sin(EXPLORE_PITCH);
+      const horizontal = Math.hypot(x, z) || 1;
+      const yawX = x / horizontal;
+      const yawZ = z / horizontal;
+      const turnedX = yawX * Math.cos(angle) - yawZ * Math.sin(angle);
+      const turnedZ = yawX * Math.sin(angle) + yawZ * Math.cos(angle);
+      const elevation = THREE.MathUtils.clamp(
+        Math.asin(THREE.MathUtils.clamp(exploreFocusDirection.y, -1, 1)) + deltaY * 0.0032,
+        0.12,
+        1.15,
+      );
+      const cos = Math.cos(elevation);
+      exploreFocusDirection.set(turnedX * cos, Math.sin(elevation), turnedZ * cos);
     },
     pickExploreItem,
     selectExploreItem,
