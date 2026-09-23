@@ -38,7 +38,8 @@ create table public.sponsorship_history (
     logo_path is null
     or (
       logo_path !~ '(^|/)\.\.(/|$)'
-      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$'
+      and char_length(logo_path) <= 549
+      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]*$'
     )
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
@@ -86,7 +87,8 @@ create table public.current_sponsorships (
     logo_path is null
     or (
       logo_path !~ '(^|/)\.\.(/|$)'
-      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$'
+      and char_length(logo_path) <= 549
+      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]*$'
     )
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
@@ -135,7 +137,8 @@ create table public.commerce_orders (
     logo_path is null
     or (
       logo_path !~ '(^|/)\.\.(/|$)'
-      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$'
+      and char_length(logo_path) <= 549
+      and logo_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9][A-Za-z0-9._/-]*$'
     )
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
