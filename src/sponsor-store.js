@@ -11,6 +11,8 @@ const supabase = sponsorStoreEnabled
     })
   : null;
 
+const DEFAULT_DESIGN = Object.freeze({ x: 0.5, y: 0.5, scale: 0.46, rotation: 0 });
+
 function messageFor(error) {
   if (error?.code === "23505") {
     return "Ese lugar cambió de estado. Actualizá la ciudad e intentá de nuevo.";
@@ -34,6 +36,7 @@ function fromRow(row, logoUrls) {
     logoPath,
     color: row.color,
     animation: row.animation || "float",
+    design: row.design || { ...DEFAULT_DESIGN },
     mine: row.mine === true,
     createdAt: row.created_at,
     nextPrice: Number(row.next_price_cents || 0) / 100,
@@ -79,6 +82,7 @@ function updateBrandingPayload(record, item, logoPath) {
     p_logo_path: logoPath || null,
     p_color: record.color,
     p_animation: record.animation || "float",
+    p_design: record.design || DEFAULT_DESIGN,
   };
 }
 
@@ -117,6 +121,19 @@ export async function connectSponsorStore() {
     async logout() {
       const { error } = await supabase.auth.signOut();
       throwIf(error);
+    },
+    async getClaimStatus() {
+      if (!SPONSOR_CONTRACT.rpc.claimStatus) return { available: null };
+      await requireUser();
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.claimStatus);
+      throwIf(error);
+      const value = Array.isArray(data) ? data[0] : data;
+      if (typeof value === "boolean") return { available: value };
+      if (typeof value?.available === "boolean") return { available: value.available };
+      if (typeof value?.free_claim_used === "boolean") {
+        return { available: !value.free_claim_used };
+      }
+      return { available: null };
     },
     async list() {
       const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.list);
@@ -177,6 +194,7 @@ export async function connectSponsorStore() {
           logo_path: logoPath || null,
           color: record.color,
           animation: record.animation || "float",
+          design: record.design || DEFAULT_DESIGN,
           idempotency_key: idempotencyKey,
           expected_asset_version: assetVersion,
           success_url: `${location.origin}${location.pathname}?checkout=returned`,
@@ -190,6 +208,15 @@ export async function connectSponsorStore() {
         throw new Error("El servidor devolvió una URL de pago no permitida.");
       }
       return data.checkoutUrl;
+    },
+    async remove(record) {
+      await requireUser();
+      const { data, error } = await supabase.rpc(SPONSOR_CONTRACT.rpc.release, {
+        p_asset_id: record.itemId,
+        p_reason: "released",
+      });
+      throwIf(error);
+      if (data !== true) throw new Error("El servidor no confirmó la liberación del espacio.");
     },
     subscribe(onChange) {
       const channel = supabase

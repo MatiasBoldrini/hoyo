@@ -6,6 +6,8 @@ export const SPONSOR_CONTRACT = Object.freeze({
   rpc: Object.freeze({
     list: import.meta.env.VITE_SPONSOR_LIST_RPC || "list_sponsorships",
     updateBranding: import.meta.env.VITE_SPONSOR_UPDATE_RPC || "update_branding",
+    release: import.meta.env.VITE_SPONSOR_RELEASE_RPC || "release_sponsorship",
+    claimStatus: import.meta.env.VITE_SPONSOR_CLAIM_STATUS_RPC || "",
   }),
   functions: Object.freeze({
     checkout: import.meta.env.VITE_SPONSOR_CHECKOUT_FUNCTION || "create-payment-checkout",

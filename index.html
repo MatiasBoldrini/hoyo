@@ -47,7 +47,7 @@
       <button id="play" type="button">JUGAR</button>
       <button id="open-explore" class="explore-entry" type="button">
         <span class="explore-entry-icon" aria-hidden="true">◆</span>
-        <span><b>EXPLORÁ Y PERSONALIZÁ</b><small>Recorré la ciudad 3D y elegí cualquier objeto</small></span>
+        <span><b>EXPLORÁ Y PERSONALIZÁ</b><small>Recorré la ciudad 3D y elegí un espacio disponible</small></span>
         <em>NUEVO</em>
       </button>
     </section>
@@ -58,6 +58,9 @@
       <header class="explore-topbar">
         <button id="explore-close" class="explore-close" type="button" aria-label="Volver al menú">←</button>
         <div class="explore-brand"><span>H</span><p><b>HOYO CIUDAD</b><small>Modo exploración</small></p></div>
+        <button id="explore-directory-open" class="explore-directory-open" type="button">
+          <span>⌕</span> Sponsors <em id="explore-directory-count">0</em>
+        </button>
         <div class="explore-account">
           <span id="explore-session" aria-live="polite">Sin sesión</span>
           <button id="explore-logout" type="button" hidden>Cerrar sesión</button>
@@ -66,81 +69,128 @@
       </header>
 
       <div id="explore-help" class="explore-help">
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> volar</span>
-        <span><kbd>ESPACIO</kbd> subir · <kbd>SHIFT</kbd> bajar</span>
-        <span><b>Arrastrá</b> para mirar</span>
-        <span><b>Clic</b> para elegir un objeto</span>
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> moverte</span>
+        <span><b>Mouse</b> para mirar · <b>arrastrá</b> para girar</span>
+        <span><kbd>/</kbd> sponsors</span>
+        <span><b>Clic</b> para elegir un soporte</span>
         <button id="explore-help-close" type="button" aria-label="Ocultar ayuda">×</button>
       </div>
 
-      <div class="explore-reticle" aria-hidden="true"><i></i></div>
-      <div id="explore-notice" class="explore-notice">Acercate y hacé clic en cualquier objeto</div>
-
-      <aside id="explore-editor" class="explore-editor" hidden>
-        <button id="explore-editor-close" class="editor-close" type="button" aria-label="Cerrar editor">×</button>
-        <p class="editor-kicker">Objeto seleccionado</p>
-        <div class="editor-object">
-          <span id="editor-object-icon">◆</span>
-          <p><b id="editor-object-name">Objeto urbano</b><small id="editor-object-zone">Centro</small></p>
-          <em id="editor-object-state">Disponible</em>
+      <aside id="explore-directory" class="directory" hidden aria-labelledby="directory-title">
+        <header class="directory-head">
+          <h2 id="directory-title">Sponsors de la ciudad</h2>
+          <button id="explore-directory-close" class="listing-close" type="button" aria-label="Cerrar directorio">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" /></svg>
+          </button>
+        </header>
+        <label class="directory-search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5l3 3" /></svg>
+          <input id="explore-directory-search" type="search" placeholder="Buscar marca, edificio o zona" autocomplete="off" />
+        </label>
+        <div id="explore-directory-list" class="directory-list"></div>
+        <div id="explore-directory-empty" class="directory-empty">
+          <b>Todavía no hay sponsors</b>
+          <span>Las marcas guardadas aparecerán acá para poder visitarlas.</span>
         </div>
-        <a id="editor-brand-link" class="editor-brand-link" href="" target="_blank" rel="noopener noreferrer" hidden>
-          Visitar sitio de la marca ↗
-        </a>
-        <p id="editor-price" class="editor-price" hidden></p>
+      </aside>
 
-        <form id="explore-auth-form" class="explore-auth" hidden>
-          <p><b>Guardá tu identidad</b><small>Te enviaremos un Magic Link. Iniciá sesión antes de reclamar o pagar.</small></p>
-          <label class="editor-field">
-            <span>Email</span>
-            <input id="explore-auth-email" type="email" autocomplete="email" required placeholder="vos@empresa.com" />
-          </label>
-          <button id="explore-auth-send" class="editor-save" type="submit">Enviar Magic Link</button>
-          <p id="explore-auth-status" class="editor-status" role="status" aria-live="polite"></p>
-        </form>
+      <div class="explore-reticle" aria-hidden="true"><i></i></div>
+      <div id="explore-notice" class="explore-notice">Elegí una fachada o un espacio destacado</div>
 
-        <form id="explore-form" novalidate>
-          <div class="editor-live-preview" id="editor-live-preview">
-            <span id="editor-preview-logo">TU</span>
-            <p><b id="editor-preview-name">Tu empresa</b><small>Vista previa en tiempo real</small></p>
-          </div>
+      <aside id="explore-editor" class="listing" hidden aria-labelledby="listing-title" data-state="available">
+        <div class="listing-scroll">
+          <header class="listing-head">
+            <h2 id="listing-title">Edificio urbano 63</h2>
+            <button id="explore-editor-close" class="listing-close" type="button" aria-label="Cerrar">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" /></svg>
+            </button>
+            <p class="listing-status"><i></i><span id="listing-status">Disponible</span></p>
+          </header>
 
-          <label class="editor-field">
-            <span>Nombre de tu marca</span>
-            <input id="brand-name" maxlength="24" autocomplete="organization" placeholder="Ej. Estudio Norte" required />
-          </label>
+          <p id="listing-description" class="listing-description"></p>
 
-          <label class="editor-field">
-            <span>Link <em>Opcional</em></span>
-            <input id="brand-url" type="url" inputmode="url" autocomplete="url" placeholder="https://tuempresa.com" />
-          </label>
+          <section id="listing-owner" class="listing-owner" hidden>
+            <p class="listing-section-title">Marca actual</p>
+            <div class="owner-card">
+              <span id="owner-mark" class="brand-mark"></span>
+              <p><b id="owner-name">Marca</b><small id="owner-since"></small></p>
+            </div>
+            <a id="owner-link" class="owner-link" href="" target="_blank" rel="noopener noreferrer" hidden>
+              <span id="owner-link-text">Visitar sitio</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 10.5l5-5m-4 0h4v4" /></svg>
+            </a>
+            <p class="listing-note">Podés recorrer otros espacios o iniciar un reemplazo con checkout seguro.</p>
+          </section>
 
-          <div class="editor-field">
-            <span>Logo <em>Opcional</em></span>
-            <label class="editor-logo" for="brand-logo">
-              <input id="brand-logo" type="file" accept="image/png,image/jpeg,image/webp" />
-              <b>↑ Subir logo</b><small>PNG, JPG o WebP · máx. 1 MB</small>
+          <form id="explore-form" class="listing-form" novalidate>
+            <p class="listing-section-title">Tu marca</p>
+
+            <section id="explore-auth-form" class="explore-auth" hidden>
+              <p><b>Guardá tu identidad</b><small>Te enviaremos un Magic Link. Iniciá sesión antes de reclamar o pagar.</small></p>
+              <label class="listing-field">
+                <span class="listing-label">Email</span>
+                <input id="explore-auth-email" type="email" autocomplete="email" required placeholder="vos@empresa.com" />
+              </label>
+              <button id="explore-auth-send" class="text-button" type="button">Enviar Magic Link</button>
+              <p id="explore-auth-status" class="listing-sync" role="status" aria-live="polite"></p>
+            </section>
+
+            <div class="designer">
+              <canvas id="editor-design-canvas" width="640" height="280" aria-label="Ubicación de la marca sobre la superficie"></canvas>
+              <p id="editor-preview-context" class="designer-hint">Arrastrá tu marca para ubicarla en la fachada.</p>
+              <div class="designer-controls">
+                <label><span>Tamaño</span><input id="editor-design-scale" type="range" min="18" max="82" value="46" /></label>
+                <label><span>Rotación</span><input id="editor-design-rotation" type="range" min="-45" max="45" value="0" /></label>
+                <button id="editor-design-reset" class="text-button muted" type="button">Centrar</button>
+              </div>
+            </div>
+
+            <div class="logo-field">
+              <label id="logo-drop" class="brand-mark is-empty" for="brand-logo">
+                <input id="brand-logo" type="file" accept="image/png,image/jpeg,image/webp" />
+                <span id="brand-mark-initials"></span>
+              </label>
+              <div class="logo-meta">
+                <b>Logo</b>
+                <small>PNG, JPG o WebP de hasta 1 MB. Si no subís uno, usamos tus iniciales.</small>
+                <div class="logo-actions">
+                  <label for="brand-logo" class="text-button">Subir imagen</label>
+                  <button id="brand-logo-remove" class="text-button muted" type="button" hidden>Quitar</button>
+                </div>
+              </div>
+            </div>
+            <p id="brand-logo-error" class="listing-error" hidden></p>
+
+            <label class="listing-field">
+              <span class="listing-label">Nombre <small id="brand-name-count">0/24</small></span>
+              <input id="brand-name" maxlength="24" autocomplete="organization" placeholder="Estudio Norte" required />
             </label>
-            <p id="brand-logo-error" class="editor-error" hidden></p>
+
+            <label class="listing-field">
+              <span class="listing-label">Sitio web <small>Opcional</small></span>
+              <input id="brand-url" type="url" inputmode="url" autocomplete="url" placeholder="tuempresa.com" />
+            </label>
+
+            <div class="listing-field">
+              <span class="listing-label">Color <small id="brand-color-value">#2257E6</small></span>
+              <div id="brand-colors" class="brand-swatches" role="radiogroup" aria-label="Color de marca"></div>
+            </div>
+
+            <button id="listing-release" class="release-button" type="button" hidden>Liberar este espacio</button>
+          </form>
+        </div>
+
+        <footer class="listing-footer">
+          <p id="explore-form-error" class="listing-error" role="alert" hidden></p>
+          <div class="checkout">
+            <p class="checkout-total"><small id="checkout-label">Precio</small><b id="checkout-price">US$ 0</b></p>
+            <button id="explore-save" class="checkout-button" type="submit" form="explore-form">Reservar espacio</button>
           </div>
-
-          <div class="editor-field">
-            <span>Color</span>
-            <div id="brand-colors" class="editor-colors" aria-label="Color de marca"></div>
-          </div>
-
-          <fieldset class="editor-field editor-animation">
-            <legend>Animación</legend>
-            <label><input type="radio" name="brand-animation" value="float" checked /><span>Flotar<small>Movimiento suave</small></span></label>
-            <label><input type="radio" name="brand-animation" value="pulse" /><span>Pulso<small>Destaca la marca</small></span></label>
-            <label><input type="radio" name="brand-animation" value="fixed" /><span>Fijo<small>Más realista</small></span></label>
-          </fieldset>
-
-          <p id="explore-form-error" class="editor-error" role="alert" hidden></p>
-          <button id="explore-save" class="editor-save" type="submit">Guardar en la ciudad</button>
-          <p id="explore-form-status" class="editor-status" role="status" aria-live="polite"></p>
-          <p class="editor-footnote">Los cambios se publican únicamente cuando el servidor los confirma.</p>
-        </form>
+          <p id="claim-status" class="claim-status" aria-live="polite">
+            Iniciá sesión para consultar si conservás tu claim gratis vitalicio.
+          </p>
+          <p id="listing-sync" class="listing-sync">Tu marca aparece para todos los jugadores al instante.</p>
+        </footer>
       </aside>
     </section>
 
