@@ -10,6 +10,7 @@ returns table (
   logo_path text,
   color text,
   animation text,
+  design jsonb,
   mine boolean,
   created_at timestamptz,
   next_price_cents bigint,
@@ -44,6 +45,10 @@ as $$
     case
       when c.branding_status = 'active' or c.owner_id = auth.uid() then c.animation
       else 'fixed'
+    end,
+    case
+      when c.branding_status = 'active' or c.owner_id = auth.uid() then c.design
+      else '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb
     end,
     c.owner_id = auth.uid(),
     h.started_at,
