@@ -33,6 +33,7 @@ create table public.sponsorship_history (
   currency text not null default 'USD' check (currency = 'USD'),
   company text not null check (char_length(company) between 1 and 24),
   target_url text check (target_url is null or target_url ~ '^https://'),
+  target_domain text generated always as (public.sponsorship_target_domain(target_url)) stored,
   logo_path text check (
     logo_path is null
     or (
@@ -42,12 +43,26 @@ create table public.sponsorship_history (
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
   animation text not null default 'float' check (animation in ('float', 'pulse', 'fixed')),
+  design jsonb not null default '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb
+    check (
+      jsonb_typeof(design) = 'object'
+      and design ?& array['x', 'y', 'scale', 'rotation']
+      and jsonb_typeof(design->'x') = 'number'
+      and jsonb_typeof(design->'y') = 'number'
+      and jsonb_typeof(design->'scale') = 'number'
+      and jsonb_typeof(design->'rotation') = 'number'
+      and (design->>'x')::numeric between 0.05 and 0.95
+      and (design->>'y')::numeric between 0.05 and 0.95
+      and (design->>'scale')::numeric between 0.18 and 0.82
+      and (design->>'rotation')::numeric between -45 and 45
+    ),
   started_at timestamptz not null default now(),
   ended_at timestamptz,
   end_reason text,
   source_order_id uuid,
   created_at timestamptz not null default now(),
-  check (ended_at is null or ended_at >= started_at)
+  check (ended_at is null or ended_at >= started_at),
+  check (target_url is null or target_domain is not null)
 );
 
 -- A partial unique index is the lifetime-free-claim invariant. It is not tied
@@ -66,6 +81,7 @@ create table public.current_sponsorships (
   owner_id uuid not null references auth.users(id),
   company text not null check (char_length(company) between 1 and 24),
   target_url text check (target_url is null or target_url ~ '^https://'),
+  target_domain text generated always as (public.sponsorship_target_domain(target_url)) stored,
   logo_path text check (
     logo_path is null
     or (
@@ -75,14 +91,31 @@ create table public.current_sponsorships (
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
   animation text not null default 'float' check (animation in ('float', 'pulse', 'fixed')),
+  design jsonb not null default '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb
+    check (
+      jsonb_typeof(design) = 'object'
+      and design ?& array['x', 'y', 'scale', 'rotation']
+      and jsonb_typeof(design->'x') = 'number'
+      and jsonb_typeof(design->'y') = 'number'
+      and jsonb_typeof(design->'scale') = 'number'
+      and jsonb_typeof(design->'rotation') = 'number'
+      and (design->>'x')::numeric between 0.05 and 0.95
+      and (design->>'y')::numeric between 0.05 and 0.95
+      and (design->>'scale')::numeric between 0.18 and 0.82
+      and (design->>'rotation')::numeric between -45 and 45
+    ),
   branding_status text not null default 'pending'
     check (branding_status in ('pending', 'active', 'rejected', 'suspended')),
   moderation_note text,
   activated_at timestamptz,
   updated_at timestamptz not null default now(),
-  check ((branding_status = 'active' and activated_at is not null) or branding_status <> 'active')
+  check ((branding_status = 'active' and activated_at is not null) or branding_status <> 'active'),
+  check (target_url is null or target_domain is not null)
 );
 create index current_sponsorships_owner_idx on public.current_sponsorships(owner_id);
+create unique index current_sponsorships_live_target_domain_key
+  on public.current_sponsorships(target_domain)
+  where target_domain is not null and branding_status in ('active', 'pending');
 
 create table public.commerce_orders (
   id uuid primary key default gen_random_uuid(),
@@ -97,6 +130,7 @@ create table public.commerce_orders (
   replaces_history_id uuid references public.sponsorship_history(id),
   company text not null check (char_length(company) between 1 and 24),
   target_url text check (target_url is null or target_url ~ '^https://'),
+  target_domain text generated always as (public.sponsorship_target_domain(target_url)) stored,
   logo_path text check (
     logo_path is null
     or (
@@ -106,6 +140,19 @@ create table public.commerce_orders (
   ),
   color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
   animation text not null default 'float' check (animation in ('float', 'pulse', 'fixed')),
+  design jsonb not null default '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb
+    check (
+      jsonb_typeof(design) = 'object'
+      and design ?& array['x', 'y', 'scale', 'rotation']
+      and jsonb_typeof(design->'x') = 'number'
+      and jsonb_typeof(design->'y') = 'number'
+      and jsonb_typeof(design->'scale') = 'number'
+      and jsonb_typeof(design->'rotation') = 'number'
+      and (design->>'x')::numeric between 0.05 and 0.95
+      and (design->>'y')::numeric between 0.05 and 0.95
+      and (design->>'scale')::numeric between 0.18 and 0.82
+      and (design->>'rotation')::numeric between -45 and 45
+    ),
   idempotency_key text not null check (char_length(idempotency_key) between 8 and 128),
   request_fingerprint text not null,
   payment_provider text check (payment_provider is null or payment_provider ~ '^[a-z0-9_-]{2,32}$'),
@@ -120,12 +167,16 @@ create table public.commerce_orders (
   check (
     (provider_checkout_id is null and payment_provider is null)
     or (provider_checkout_id is not null and payment_provider is not null)
-  )
+  ),
+  check (target_url is null or target_domain is not null)
 );
 create index commerce_orders_buyer_created_idx
   on public.commerce_orders(buyer_id, created_at desc);
 create index commerce_orders_expiry_idx
   on public.commerce_orders(expires_at) where status = 'reserved';
+create unique index commerce_orders_live_target_domain_key
+  on public.commerce_orders(target_domain)
+  where target_domain is not null and status in ('reserved', 'paid');
 
 create table public.asset_reservations (
   asset_id text primary key references public.market_assets(id),
@@ -174,7 +225,7 @@ on conflict (id) do nothing;
 
 insert into public.sponsorship_history (
   id, asset_id, owner_id, acquisition_kind, amount_cents, company, target_url,
-  logo_path, color, animation, started_at, ended_at, end_reason, created_at
+  logo_path, color, animation, design, started_at, ended_at, end_reason, created_at
 )
 select
   id, asset_id, owner_id, 'legacy', price_usd::bigint * 100, company,
@@ -185,7 +236,7 @@ select
     then logo_path
     else null
   end,
-  color, animation, created_at,
+  color, animation, design, created_at,
   case when status = 'active' then null else updated_at end,
   case when status = 'active' then null else 'legacy_' || status end,
   created_at
@@ -193,11 +244,11 @@ from public.sponsorships_legacy;
 
 insert into public.current_sponsorships (
   asset_id, history_id, owner_id, company, target_url, logo_path, color,
-  animation, branding_status, activated_at, updated_at
+  animation, design, branding_status, activated_at, updated_at
 )
 select
   h.asset_id, h.id, h.owner_id, h.company, h.target_url, h.logo_path, h.color,
-  h.animation, 'active', h.started_at, greatest(h.started_at, l.updated_at)
+  h.animation, h.design, 'active', h.started_at, greatest(h.started_at, l.updated_at)
 from public.sponsorship_history h
 join public.sponsorships_legacy l on l.id = h.id
 where l.status = 'active';
@@ -253,6 +304,7 @@ select
   c.logo_path,
   c.color,
   c.animation,
+  c.design,
   c.activated_at,
   c.updated_at
 from public.current_sponsorships c
@@ -272,6 +324,7 @@ as select
   b.logo_path,
   b.color,
   b.animation,
+  b.design,
   'active'::text as status,
   b.activated_at as created_at,
   b.updated_at
@@ -306,6 +359,23 @@ end;
 $$;
 revoke all on function public.require_verified_user() from public, anon, authenticated;
 
+create or replace function public.free_claim_available()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (
+    select 1
+    from public.sponsorship_history h
+    where h.owner_id = public.require_verified_user()
+      and h.acquisition_kind = 'free_claim'
+  );
+$$;
+revoke all on function public.free_claim_available() from public, anon;
+grant execute on function public.free_claim_available() to authenticated;
+
 create or replace function public.complete_market_order(p_order_id uuid)
 returns public.commerce_orders
 language plpgsql
@@ -327,6 +397,21 @@ begin
   end if;
   if v_order.expires_at <= now() then
     raise exception 'order has expired';
+  end if;
+
+  if v_order.target_domain is not null then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(v_order.target_domain, 0)
+    );
+    if exists (
+      select 1
+      from public.current_sponsorships c
+      where c.target_domain = v_order.target_domain
+        and c.asset_id <> v_order.asset_id
+        and c.branding_status in ('active', 'pending')
+    ) then
+      raise exception 'target domain is already claimed';
+    end if;
   end if;
 
   perform 1 from public.market_assets
@@ -354,20 +439,20 @@ begin
 
   insert into public.sponsorship_history (
     asset_id, owner_id, acquisition_kind, amount_cents, company, target_url,
-    logo_path, color, animation, source_order_id
+    logo_path, color, animation, design, source_order_id
   ) values (
     v_order.asset_id, v_order.buyer_id, v_order.kind, v_order.amount_cents,
     v_order.company, v_order.target_url, v_order.logo_path, v_order.color,
-    v_order.animation, v_order.id
+    v_order.animation, v_order.design, v_order.id
   ) returning id into v_history_id;
 
   insert into public.current_sponsorships (
     asset_id, history_id, owner_id, company, target_url, logo_path, color,
-    animation, branding_status
+    animation, design, branding_status
   ) values (
     v_order.asset_id, v_history_id, v_order.buyer_id, v_order.company,
     v_order.target_url, v_order.logo_path, v_order.color, v_order.animation,
-    'pending'
+    v_order.design, 'pending'
   );
 
   update public.market_assets
@@ -402,6 +487,7 @@ create or replace function public.reserve_checkout(
   p_logo_path text,
   p_color text,
   p_animation text,
+  p_design jsonb,
   p_idempotency_key text,
   p_expected_asset_version bigint default null,
   p_ttl_seconds integer default 900
@@ -419,6 +505,7 @@ declare
   v_kind text;
   v_amount bigint;
   v_fingerprint text;
+  v_target_domain text := public.sponsorship_target_domain(nullif(p_target_url, ''));
 begin
   if p_ttl_seconds not between 300 and 1800 then
     raise exception 'reservation TTL must be between 300 and 1800 seconds';
@@ -429,9 +516,12 @@ begin
   if p_logo_path is not null and p_logo_path not like v_user_id::text || '/%' then
     raise exception 'logo_path must be in the buyer storage folder';
   end if;
+  if p_target_url is not null and v_target_domain is null then
+    raise exception 'target_url must contain a domain';
+  end if;
 
   v_fingerprint := md5(concat_ws('|', p_asset_id, p_company, p_target_url,
-    p_logo_path, p_color, p_animation, p_expected_asset_version));
+    p_logo_path, p_color, p_animation, p_design::text, p_expected_asset_version));
 
   select * into v_order
   from public.commerce_orders
@@ -441,6 +531,21 @@ begin
       raise exception 'idempotency key was already used with different input';
     end if;
     return v_order;
+  end if;
+
+  if v_target_domain is not null then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(v_target_domain, 0)
+    );
+    if exists (
+      select 1
+      from public.current_sponsorships c
+      where c.target_domain = v_target_domain
+        and c.asset_id <> p_asset_id
+        and c.branding_status in ('active', 'pending')
+    ) then
+      raise exception 'target domain is already claimed';
+    end if;
   end if;
 
   select * into v_asset
@@ -484,12 +589,12 @@ begin
 
   insert into public.commerce_orders (
     buyer_id, asset_id, kind, amount_cents, asset_version,
-    replaces_history_id, company, target_url, logo_path, color, animation,
+    replaces_history_id, company, target_url, logo_path, color, animation, design,
     idempotency_key, request_fingerprint, expires_at
   ) values (
     v_user_id, p_asset_id, v_kind, v_amount, v_asset.version,
     v_current.history_id, trim(p_company), nullif(p_target_url, ''),
-    nullif(p_logo_path, ''), p_color, p_animation, p_idempotency_key,
+    nullif(p_logo_path, ''), p_color, p_animation, p_design, p_idempotency_key,
     v_fingerprint, now() + make_interval(secs => p_ttl_seconds)
   ) returning * into v_order;
 
@@ -506,6 +611,35 @@ begin
   end if;
   return v_order;
 end;
+$$;
+revoke all on function public.reserve_checkout(text,text,text,text,text,text,jsonb,text,bigint,integer)
+  from public, anon;
+grant execute on function public.reserve_checkout(text,text,text,text,text,text,jsonb,text,bigint,integer)
+  to authenticated;
+
+-- Keep the pre-design PostgREST argument set callable during rolling frontend
+-- deployments. New callers send p_design to the overload above.
+create or replace function public.reserve_checkout(
+  p_asset_id text,
+  p_company text,
+  p_target_url text,
+  p_logo_path text,
+  p_color text,
+  p_animation text,
+  p_idempotency_key text,
+  p_expected_asset_version bigint default null,
+  p_ttl_seconds integer default 900
+)
+returns public.commerce_orders
+language sql
+security invoker
+set search_path = ''
+as $$
+  select public.reserve_checkout(
+    p_asset_id, p_company, p_target_url, p_logo_path, p_color, p_animation,
+    '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb,
+    p_idempotency_key, p_expected_asset_version, p_ttl_seconds
+  );
 $$;
 revoke all on function public.reserve_checkout(text,text,text,text,text,text,text,bigint,integer)
   from public, anon;
@@ -665,7 +799,8 @@ create or replace function public.update_branding(
   p_target_url text,
   p_logo_path text,
   p_color text,
-  p_animation text
+  p_animation text,
+  p_design jsonb
 )
 returns public.current_sponsorships
 language plpgsql
@@ -675,6 +810,7 @@ as $$
 declare
   v_user_id uuid := public.require_verified_user();
   v_current public.current_sponsorships;
+  v_target_domain text := public.sponsorship_target_domain(nullif(p_target_url, ''));
 begin
   if p_target_url is not null and p_target_url !~ '^https://' then
     raise exception 'target_url must use https';
@@ -682,9 +818,27 @@ begin
   if p_logo_path is not null and p_logo_path not like v_user_id::text || '/%' then
     raise exception 'logo_path must be in the owner storage folder';
   end if;
+  if p_target_url is not null and v_target_domain is null then
+    raise exception 'target_url must contain a domain';
+  end if;
+  if v_target_domain is not null then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(v_target_domain, 0)
+    );
+    if exists (
+      select 1
+      from public.current_sponsorships c
+      where c.target_domain = v_target_domain
+        and c.asset_id <> p_asset_id
+        and c.branding_status in ('active', 'pending')
+    ) then
+      raise exception 'target domain is already claimed';
+    end if;
+  end if;
   update public.current_sponsorships
   set company = trim(p_company), target_url = nullif(p_target_url, ''),
       logo_path = nullif(p_logo_path, ''), color = p_color, animation = p_animation,
+      design = p_design,
       branding_status = 'pending', moderation_note = null, activated_at = null,
       updated_at = now()
   where asset_id = p_asset_id and owner_id = v_user_id
@@ -694,6 +848,27 @@ begin
   values (p_asset_id, v_current.history_id, v_user_id, 'branding_updated');
   return v_current;
 end;
+$$;
+revoke all on function public.update_branding(text,text,text,text,text,text,jsonb) from public, anon;
+grant execute on function public.update_branding(text,text,text,text,text,text,jsonb) to authenticated;
+
+create or replace function public.update_branding(
+  p_asset_id text,
+  p_company text,
+  p_target_url text,
+  p_logo_path text,
+  p_color text,
+  p_animation text
+)
+returns public.current_sponsorships
+language sql
+security invoker
+set search_path = ''
+as $$
+  select public.update_branding(
+    p_asset_id, p_company, p_target_url, p_logo_path, p_color, p_animation,
+    '{"x": 0.5, "y": 0.5, "scale": 0.46, "rotation": 0}'::jsonb
+  );
 $$;
 revoke all on function public.update_branding(text,text,text,text,text,text) from public, anon;
 grant execute on function public.update_branding(text,text,text,text,text,text) to authenticated;

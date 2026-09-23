@@ -1393,7 +1393,8 @@ begin
       updated_at = now();
 
   insert into public.market_assets (id, category, name, metadata, is_enabled)
-  values
+  select parcel.id, 'parcel', parcel.name, '{}'::jsonb, true
+  from (values
       ('parcel-home-m126000-m54000', 'Manzana Barrio Costero Sur 01'),
       ('parcel-home-m126000-m18000', 'Manzana Barrio Costero Sur 02'),
       ('parcel-home-m126000-p18000', 'Manzana Barrio Costero Norte 03'),
@@ -1446,6 +1447,7 @@ begin
       ('parcel-home-p126000-m18000', 'Manzana Barrio Costero Sur 50'),
       ('parcel-home-p126000-p18000', 'Manzana Barrio Costero Norte 51'),
       ('parcel-home-p126000-p54000', 'Manzana Barrio Costero Norte 52')
+  ) as parcel(id, name)
   on conflict (id) do update
   set category = excluded.category,
       name = excluded.name,
