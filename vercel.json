@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "hoyo-ruddy.vercel.app" }],
+      "destination": "https://unlugar.vercel.app/:path*",
+      "permanent": true
+    }
+  ]
+}
