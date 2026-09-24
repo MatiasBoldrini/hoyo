@@ -1,6 +1,12 @@
 {
   "redirects": [
     {
+      "source": "/",
+      "has": [{ "type": "host", "value": "hoyo-ruddy.vercel.app" }],
+      "destination": "https://unlugar.vercel.app/",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "hoyo-ruddy.vercel.app" }],
       "destination": "https://unlugar.vercel.app/:path*",
