@@ -206,7 +206,8 @@ function drawMinimap(plan, me, rivals = []) {
   const sx = mapLayer.width / 2 + focusX * layerScale;
   const sy = mapLayer.height / 2 + focusZ * layerScale;
   const rivalKey = rivals.map((rival) => `${Math.round(rival.x)}:${Math.round(rival.z)}`).join(",");
-  const dot = `${Math.round(sx)}:${Math.round(sy)}:${me ? me.color : ""}:${rivalKey}`;
+  const aimKey = me ? `${Math.round(Math.atan2(me.az, me.ax) * 24)}` : "";
+  const dot = `${Math.round(sx)}:${Math.round(sy)}:${me ? me.color : ""}:${aimKey}:${rivalKey}`;
   if (dot === hudState.dot) return;
   hudState.dot = dot;
   mapCtx.clearRect(0, 0, size, size);
@@ -228,6 +229,18 @@ function drawMinimap(plan, me, rivals = []) {
     mapCtx.fill();
   }
   if (me) {
+    const angle = Math.atan2(me.az, me.ax);
+    mapCtx.save();
+    mapCtx.translate(center, center);
+    mapCtx.rotate(angle);
+    mapCtx.beginPath();
+    mapCtx.moveTo(8, 0);
+    mapCtx.arc(0, 0, 30, -0.46, 0.46);
+    mapCtx.closePath();
+    mapCtx.fillStyle = me.color;
+    mapCtx.globalAlpha = 0.9;
+    mapCtx.fill();
+    mapCtx.restore();
     mapCtx.beginPath();
     mapCtx.arc(center, center, 6, 0, Math.PI * 2);
     mapCtx.fillStyle = me.color;
@@ -416,6 +429,7 @@ window.addEventListener("keydown", (event) => {
 const coarsePointer = window.matchMedia("(pointer: coarse), (hover: none)");
 const desktopHint = hint.textContent;
 let turnFrom = null;
+let turnFromY = null;
 let turnPointer = null;
 let stickPointer = null;
 let stickX = 0;
@@ -438,6 +452,7 @@ window.addEventListener("pointerdown", (event) => {
   }
   if (!mouseTurn && !(touch && stickPointer !== null && event.pointerId !== stickPointer)) return;
   turnFrom = event.clientX;
+  turnFromY = event.clientY;
   turnPointer = event.pointerId;
   document.body.classList.add("turning");
 }, true);
@@ -453,6 +468,10 @@ window.addEventListener("pointermove", (event) => {
   if (turnFrom !== null && event.pointerId === turnPointer) {
     game.rotateCamera((event.clientX - turnFrom) * 0.006);
     turnFrom = event.clientX;
+    if (!coarsePointer.matches && matchActive()) {
+      game.tiltCamera((event.clientY - turnFromY) * 0.04);
+      turnFromY = event.clientY;
+    }
     return;
   }
   if (coarsePointer.matches) return;
@@ -466,6 +485,7 @@ function stopTurning(event) {
   }
   if (event && turnPointer !== null && event.pointerId !== turnPointer) return;
   turnFrom = null;
+  turnFromY = null;
   turnPointer = null;
   document.body.classList.remove("turning");
 }

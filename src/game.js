@@ -832,6 +832,9 @@ export async function mountGame(canvas, hooks) {
   let camOrbit = 0.4;
   let camYaw = 0;
   let camYawGoal = 0;
+  let camHeight = 0;
+  let aimHeadingX = 0;
+  let aimHeadingZ = -1;
   let shake = 0;
   let player = null;
   const pointer = new THREE.Vector2();
@@ -1110,6 +1113,7 @@ export async function mountGame(canvas, hooks) {
     enableShadows();
     camYaw = 0;
     camYawGoal = 0;
+    camHeight = 0;
     followCamera(0, true);
     followSun(true);
     startRendering();
@@ -2189,11 +2193,11 @@ export async function mountGame(canvas, hooks) {
   function followCamera(dt, snap = false) {
     const radius = player ? player.radius : START_R;
     const focus = player || { x: 0, z: 0, radius };
-    const back = 9.2 + radius * 1.85;
-    const height = 12.4 + radius * 2.15;
-    const ahead = 2.8 + radius * 0.42;
+    const back = 11.4 + radius * 1.75;
+    const height = THREE.MathUtils.clamp(8.4 + radius * 1.15 + camHeight, 3.6, 18);
+    const ahead = 1.4;
     shake *= Math.pow(0.92, dt * 60);
-    // Solo gira alrededor del hoyo: la altura y la inclinación no cambian.
+    // El arrastre gira alrededor del hoyo y, en escritorio, sube o baja la cámara.
     camYaw = snap ? camYawGoal : THREE.MathUtils.damp(camYaw, camYawGoal, 14, dt);
     const sx = Math.sin(camYaw);
     const cz = Math.cos(camYaw);
@@ -2204,7 +2208,7 @@ export async function mountGame(canvas, hooks) {
     );
     if (snap) camera.position.copy(desired);
     else camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    look.set(focus.x - sx * ahead, 2.6, focus.z - cz * ahead);
+    look.set(focus.x - sx * ahead, 1.3, focus.z - cz * ahead);
     camera.lookAt(look);
     camera.updateMatrixWorld();
     pitCam.value.copy(camera.position);
@@ -2265,11 +2269,37 @@ export async function mountGame(canvas, hooks) {
       .map((row, index) => ({ ...row, rank: index + 1 }));
   }
 
+  function playerAim() {
+    if (stickActive) {
+      const forwardX = -Math.sin(camYaw);
+      const forwardZ = -Math.cos(camYaw);
+      const rightX = Math.cos(camYaw);
+      const rightZ = -Math.sin(camYaw);
+      const x = rightX * stickX + forwardX * stickY;
+      const z = rightZ * stickX + forwardZ * stickY;
+      if (x * x + z * z > 0.0001) return { x, z };
+    }
+    const aim = groundAim();
+    if (aim) {
+      const x = aim.x - player.x;
+      const z = aim.z - player.z;
+      if (x * x + z * z > 0.04) return { x, z };
+    }
+    return null;
+  }
+
   function playerMark() {
     if (!player || !player.alive) return null;
+    const aim = playerAim();
+    if (aim) {
+      aimHeadingX = aim.x;
+      aimHeadingZ = aim.z;
+    }
     return {
       x: player.x,
       z: player.z,
+      ax: aimHeadingX,
+      az: aimHeadingZ,
       color: `#${player.color.toString(16).padStart(6, "0")}`,
     };
   }
@@ -2717,7 +2747,7 @@ export async function mountGame(canvas, hooks) {
       if (exploreFocused || exploreReturning) return;
       exploreYaw += deltaX * 0.0022;
       explorePitch = THREE.MathUtils.clamp(
-        explorePitch - deltaY * 0.0022,
+        explorePitch + deltaY * 0.0022,
         EXPLORE_PITCH_MIN,
         EXPLORE_PITCH_MAX,
       );
@@ -2807,6 +2837,9 @@ export async function mountGame(canvas, hooks) {
     },
     rotateCamera(radians) {
       camYawGoal += radians;
+    },
+    tiltCamera(delta) {
+      camHeight = THREE.MathUtils.clamp(camHeight + delta, -5.2, 9);
     },
     syncNetworkState,
     sleep: stopRendering,
