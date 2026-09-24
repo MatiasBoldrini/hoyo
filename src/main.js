@@ -21,6 +21,7 @@ const play = document.querySelector("#play");
 const openParty = document.querySelector("#open-party");
 const again = document.querySelector("#again");
 const endTitle = document.querySelector("#end-title");
+const endKicker = document.querySelector("#end-kicker");
 const endScore = document.querySelector("#end-score");
 const loading = document.querySelector("#loading");
 const menuMessage = document.querySelector("#menu-message");
@@ -388,6 +389,7 @@ function begin(options = {}) {
   hud.hidden = false;
   menuMessage.hidden = true;
   toast.hidden = true;
+  document.body.classList.remove("is-down");
   again.textContent = "OTRA VEZ";
   nick.blur();
   hint.classList.remove("hide");
@@ -466,10 +468,10 @@ window.addEventListener("pointermove", (event) => {
   }
   if (!controlActive()) return;
   if (turnFrom !== null && event.pointerId === turnPointer) {
-    game.rotateCamera((event.clientX - turnFrom) * 0.006);
+    game.rotateCamera(event.clientX - turnFrom);
     turnFrom = event.clientX;
     if (!coarsePointer.matches && matchActive()) {
-      game.tiltCamera((event.clientY - turnFromY) * 0.04);
+      game.tiltCamera(event.clientY - turnFromY);
       turnFromY = event.clientY;
     }
     return;
@@ -496,18 +498,23 @@ window.addEventListener("blur", () => stopTurning());
 game.onEnd = (result) => {
   hud.hidden = true;
   end.hidden = false;
-  endTitle.textContent = result.won ? "¡Sos el hoyo más grande!" : `Quedaste #${result.rank}`;
+  endKicker.textContent = result.eaten ? "Te comieron" : "Se acabó el tiempo";
+  endTitle.textContent = result.eaten
+    ? "Te tragaron"
+    : result.won
+      ? "¡Sos el hoyo más grande!"
+      : `Quedaste #${result.rank}`;
   const best = Math.max(result.score, Number(localStorage.getItem("hoyo-best") || 0));
   localStorage.setItem("hoyo-best", String(best));
   endScore.textContent = `Puntaje ${result.score} · récord ${best}`;
   renderRows(finalList, result.rows);
   again.textContent = partyController.active ? "VOLVER AL MENÚ" : "OTRA VEZ";
   partyController.finish();
+  if (result.eaten) document.body.classList.add("is-down");
 };
 
 game.onPlayerDeath = () => {
   if (partyController.active) partyController.leave({ showMenu: false });
-  showMainMenu("Te tragaron. Elegí tu nombre y volvé a la ciudad.");
 };
 
 const joystick = document.querySelector("#joystick");
@@ -605,7 +612,7 @@ function showMainMenu(message) {
   end.hidden = true;
   menu.hidden = false;
   toast.hidden = true;
-  document.body.classList.remove("is-live");
+  document.body.classList.remove("is-live", "is-down");
   game.sleep();
   stopTurning();
   menuMessage.textContent = message;

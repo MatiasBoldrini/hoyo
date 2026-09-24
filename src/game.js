@@ -833,6 +833,7 @@ export async function mountGame(canvas, hooks) {
   let camYaw = 0;
   let camYawGoal = 0;
   let camHeight = 0;
+  let camHeightGoal = 0;
   let aimHeadingX = 0;
   let aimHeadingZ = -1;
   let shake = 0;
@@ -1114,6 +1115,7 @@ export async function mountGame(canvas, hooks) {
     camYaw = 0;
     camYawGoal = 0;
     camHeight = 0;
+    camHeightGoal = 0;
     followCamera(0, true);
     followSun(true);
     startRendering();
@@ -2098,11 +2100,18 @@ export async function mountGame(canvas, hooks) {
         hunter.score = Math.round(hunter.mass);
         hunter.punch = Math.min(0.34, hunter.punch + 0.12);
         if (prey.player) {
-          toast = "¡Te tragaron!";
-          toastUntil = performance.now() + 1600;
           sfx.eaten();
-          returnToMenu();
+          phase = "down";
+          const rows = leaderboard();
+          const me = rows.find((row) => row.me);
           mountGame._api.onPlayerDeath?.();
+          mountGame._api.onEnd?.({
+            won: false,
+            eaten: true,
+            rank: me?.rank || rows.length,
+            score: me?.score || 0,
+            rows,
+          });
         } else if (hunter.player) {
           popText(`+${Math.round(prey.mass * 0.65 + 12)}`, prey.x, 1, prey.z);
           sfx.rival();
@@ -2199,6 +2208,7 @@ export async function mountGame(canvas, hooks) {
     shake *= Math.pow(0.92, dt * 60);
     // El arrastre gira alrededor del hoyo y, en escritorio, sube o baja la cámara.
     camYaw = snap ? camYawGoal : THREE.MathUtils.damp(camYaw, camYawGoal, 14, dt);
+    camHeight = snap ? camHeightGoal : THREE.MathUtils.damp(camHeight, camHeightGoal, 14, dt);
     const sx = Math.sin(camYaw);
     const cz = Math.cos(camYaw);
     desired.set(
@@ -2731,6 +2741,16 @@ export async function mountGame(canvas, hooks) {
     }
   }
 
+  function pointerRadians(delta, vertical) {
+    const rect = canvas.getBoundingClientRect();
+    const span = Math.max(1, vertical ? rect.height : rect.width);
+    const fovY = THREE.MathUtils.degToRad(camera.fov);
+    const fov = vertical
+      ? fovY
+      : 2 * Math.atan(Math.tan(fovY / 2) * (rect.width / Math.max(rect.height, 1)));
+    return delta * (fov / span) * 2.15;
+  }
+
   const api = {
     start,
     returnToMenu,
@@ -2745,16 +2765,16 @@ export async function mountGame(canvas, hooks) {
     },
     rotateExplore(deltaX, deltaY = 0) {
       if (exploreFocused || exploreReturning) return;
-      exploreYaw += deltaX * 0.0022;
+      exploreYaw += pointerRadians(deltaX, false);
       explorePitch = THREE.MathUtils.clamp(
-        explorePitch + deltaY * 0.0022,
+        explorePitch + pointerRadians(deltaY, true),
         EXPLORE_PITCH_MIN,
         EXPLORE_PITCH_MAX,
       );
     },
     orbitExplore(deltaX, deltaY = 0) {
       if (!exploreFocused || exploreReturning) return;
-      const angle = deltaX * 0.0032;
+      const angle = pointerRadians(deltaX, false);
       const x = exploreFocusDirection.x;
       const z = exploreFocusDirection.z;
       const horizontal = Math.hypot(x, z) || 1;
@@ -2763,7 +2783,7 @@ export async function mountGame(canvas, hooks) {
       const turnedX = yawX * Math.cos(angle) - yawZ * Math.sin(angle);
       const turnedZ = yawX * Math.sin(angle) + yawZ * Math.cos(angle);
       const elevation = THREE.MathUtils.clamp(
-        Math.asin(THREE.MathUtils.clamp(exploreFocusDirection.y, -1, 1)) + deltaY * 0.0032,
+        Math.asin(THREE.MathUtils.clamp(exploreFocusDirection.y, -1, 1)) + pointerRadians(deltaY, true),
         0.12,
         1.15,
       );
@@ -2835,11 +2855,18 @@ export async function mountGame(canvas, hooks) {
       stickY = y;
       stickActive = x !== 0 || y !== 0;
     },
-    rotateCamera(radians) {
-      camYawGoal += radians;
+    rotateCamera(pixels) {
+      camYawGoal += pointerRadians(pixels, false);
     },
-    tiltCamera(delta) {
-      camHeight = THREE.MathUtils.clamp(camHeight + delta, -5.2, 9);
+    tiltCamera(pixels) {
+      const radius = player ? player.radius : START_R;
+      const back = 11.4 + radius * 1.75;
+      const base = 8.4 + radius * 1.15;
+      const height = THREE.MathUtils.clamp(base + camHeightGoal, 3.6, 18);
+      const pitch = Math.atan2(height - 1.3, back);
+      const nextPitch = THREE.MathUtils.clamp(pitch + pointerRadians(pixels, true), 0.22, 1.05);
+      const nextHeight = 1.3 + Math.tan(nextPitch) * back;
+      camHeightGoal = THREE.MathUtils.clamp(nextHeight - base, -5.2, 9);
     },
     syncNetworkState,
     sleep: stopRendering,

@@ -29,6 +29,11 @@ canvas {
   display: block;
   width: 100%;
   height: 100%;
+  transition: filter 1.6s ease;
+}
+
+body.is-down canvas {
+  filter: grayscale(1) brightness(0.8);
 }
 
 #home-poster {
