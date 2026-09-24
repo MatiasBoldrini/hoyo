@@ -89,6 +89,11 @@ function single(value: unknown): Record<string, unknown> {
   return row as Record<string, unknown>;
 }
 
+function asSafeInteger(value: unknown): number | null {
+  if (typeof value === "string" && /^-?\d+$/.test(value)) value = Number(value);
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
 export async function preparePayment(
   input: {
     assetId: string;
@@ -124,28 +129,30 @@ export async function preparePayment(
       config.anonKey,
     ),
   );
+  const amountMinor = asSafeInteger(row.amount_cents);
+  const version = asSafeInteger(row.version);
   if (
     typeof row.id !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(row.id) ||
-    !Number.isSafeInteger(row.amount_cents) ||
-    Number(row.amount_cents) < 0 ||
+    amountMinor === null ||
+    amountMinor < 0 ||
     typeof row.currency !== "string" ||
     !/^[a-zA-Z]{3}$/.test(row.currency) ||
     typeof row.kind !== "string" ||
     typeof row.status !== "string" ||
-    !Number.isSafeInteger(row.version)
+    version === null
   ) {
     throw new Error("reserve_checkout returned an invalid contract");
   }
   return {
     orderId: row.id,
-    amountMinor: Number(row.amount_cents),
+    amountMinor,
     currency: row.currency.toLowerCase(),
-    description: paymentItemName(),
+    description: amountMinor > 0 ? paymentItemName() : "Lugar",
     kind: row.kind,
     status: row.status,
-    version: Number(row.version),
+    version,
   };
 }
 
@@ -169,10 +176,11 @@ export async function recordCheckout(
       config.serviceRoleKey,
     ),
   );
-  if (!Number.isSafeInteger(row.version)) {
+  const version = asSafeInteger(row.version);
+  if (version === null) {
     throw new Error("attach_provider_checkout returned an invalid contract");
   }
-  return Number(row.version);
+  return version;
 }
 
 export async function completePayment(input: {

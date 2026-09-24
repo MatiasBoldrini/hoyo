@@ -114,7 +114,9 @@ export function paymentItemName(): string {
 }
 
 export function checkoutTtlSeconds(): number {
-  const value = Number(required("CHECKOUT_TTL_SECONDS"));
+  const raw = Deno.env.get("CHECKOUT_TTL_SECONDS")?.trim();
+  if (!raw) return 900;
+  const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < 300 || value > 1_800) {
     throw new Error("CHECKOUT_TTL_SECONDS must be an integer between 300 and 1800");
   }

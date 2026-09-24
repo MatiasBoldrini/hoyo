@@ -124,6 +124,7 @@ Deno.serve(async (request) => {
     if (!(error instanceof HttpError)) {
       console.error("Create checkout failed", {
         name: error instanceof Error ? error.name : "unknown",
+        message: error instanceof Error ? error.message : "unknown",
       });
     }
     return errorResponse(error, origin);

@@ -201,7 +201,10 @@ export async function connectSponsorStore() {
         let detail = error.message;
         try {
           const body = await error.context?.json?.();
-          detail = body?.message || body?.error || detail;
+          const nested = body?.error;
+          detail = (typeof nested === "string" ? nested : nested?.message) ||
+            (typeof body?.message === "string" ? body.message : "") ||
+            detail;
         } catch {
           detail = error.message;
         }
