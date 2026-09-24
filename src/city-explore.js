@@ -119,9 +119,21 @@ function writeCache(records) {
   }
 }
 
+function canvasToWebp(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob || blob.type !== "image/webp") {
+        reject(new Error("No pudimos guardar la imagen como WebP."));
+        return;
+      }
+      resolve(blob);
+    }, "image/webp", 0.8);
+  });
+}
+
 async function compactImage(file) {
   if (!LOGO_TYPES.includes(file.type)) throw new Error("Usá una imagen PNG, JPG o WebP.");
-  if (file.size > 1024 * 1024) throw new Error("La imagen pesa más de 1 MB.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("La imagen pesa más de 8 MB.");
   const source = await createImageBitmap(file);
   const canvas = document.createElement("canvas");
   const scale = Math.min(256 / source.width, 256 / source.height, 1);
@@ -129,7 +141,13 @@ async function compactImage(file) {
   canvas.height = Math.max(1, Math.round(source.height * scale));
   canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
   source.close();
-  return canvas.toDataURL("image/webp", 0.84);
+  const blob = await canvasToWebp(canvas);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("No pudimos leer la imagen comprimida."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function paintMark(element, { company, logo, color }) {
@@ -476,27 +494,35 @@ export async function mountCityExplore(game) {
     designContext.translate(centerX, centerY);
     designContext.rotate((design.rotation * Math.PI) / 180);
 
-    if (designerImage) {
-      const ratio = designerImage.width / designerImage.height;
-      let drawWidth = signWidth;
-      let drawHeight = drawWidth / ratio;
-      if (drawHeight > signHeight) {
-        drawHeight = signHeight;
-        drawWidth = drawHeight * ratio;
-      }
-      designContext.drawImage(designerImage, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-    } else {
-      const label = draft.company.trim() || "Tu marca";
-      const fontSize = Math.max(18, signWidth / Math.max(5.5, label.length * 0.58));
+    const label = draft.company.trim() || "Tu marca";
+    const drawLabel = (y, maxWidth, fontSize) => {
       designContext.font = `900 ${fontSize}px "Avenir Next", sans-serif`;
       designContext.textAlign = "center";
       designContext.textBaseline = "middle";
       designContext.lineJoin = "round";
       designContext.lineWidth = Math.max(4, fontSize * 0.14);
       designContext.strokeStyle = "rgba(255,255,255,.92)";
-      designContext.strokeText(label, 0, 0, signWidth * 0.92);
+      designContext.strokeText(label, 0, y, maxWidth);
       designContext.fillStyle = draft.color;
-      designContext.fillText(label, 0, 0, signWidth * 0.92);
+      designContext.fillText(label, 0, y, maxWidth);
+    };
+    if (designerImage) {
+      const textBand = signHeight * 0.32;
+      const imageBoxHeight = signHeight - textBand;
+      const ratio = designerImage.width / designerImage.height;
+      let drawWidth = signWidth * 0.92;
+      let drawHeight = drawWidth / ratio;
+      if (drawHeight > imageBoxHeight * 0.92) {
+        drawHeight = imageBoxHeight * 0.92;
+        drawWidth = drawHeight * ratio;
+      }
+      const imageTop = -signHeight / 2 + (imageBoxHeight - drawHeight) / 2;
+      designContext.drawImage(designerImage, -drawWidth / 2, imageTop, drawWidth, drawHeight);
+      const fontSize = Math.max(14, Math.min(signHeight * 0.22, signWidth / Math.max(6, label.length * 0.62)));
+      drawLabel(signHeight / 2 - textBand / 2, signWidth * 0.92, fontSize);
+    } else {
+      const fontSize = Math.max(18, signWidth / Math.max(5.5, label.length * 0.58));
+      drawLabel(0, signWidth * 0.92, fontSize);
     }
     designContext.restore();
   }

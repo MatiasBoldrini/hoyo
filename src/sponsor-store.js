@@ -141,6 +141,7 @@ export async function connectSponsorStore() {
       if (!dataUrl?.startsWith("data:")) return "";
       const user = await requireUser();
       const blob = await (await fetch(dataUrl)).blob();
+      if (blob.type !== "image/webp") throw new Error("La imagen tiene que subirse como WebP.");
       const safeAsset = item.id.replace(/[^a-zA-Z0-9_-]/g, "_");
       const path = `${user.id}/${safeAsset}/${crypto.randomUUID()}.webp`;
       const { error } = await supabase.storage

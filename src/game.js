@@ -427,20 +427,26 @@ function brandSurface(record, item) {
   const paint = (image = null) => {
     ctx.clearRect(0, 0, designWidth, designHeight);
     const color = record.color || "#2257e6";
-    if (image) {
-      drawContainedImage(ctx, image, 18, 18, designWidth - 36, designHeight - 36);
-    } else {
-      const label = record.company || "Tu empresa";
-      const fontSize = Math.max(42, designWidth / Math.max(5.5, label.length * 0.58));
+    const label = record.company || "Tu empresa";
+    const drawLabel = (x, y, maxWidth, fontSize) => {
       ctx.font = `900 ${fontSize}px Avenir Next, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.lineJoin = "round";
-      ctx.lineWidth = Math.max(10, fontSize * 0.14);
+      ctx.lineWidth = Math.max(8, fontSize * 0.14);
       ctx.strokeStyle = "rgba(255,255,255,.94)";
-      ctx.strokeText(label, designWidth / 2, designHeight / 2, designWidth - 28);
+      ctx.strokeText(label, x, y, maxWidth);
       ctx.fillStyle = color;
-      ctx.fillText(label, designWidth / 2, designHeight / 2, designWidth - 28);
+      ctx.fillText(label, x, y, maxWidth);
+    };
+    if (image) {
+      const textBand = 78;
+      drawContainedImage(ctx, image, 24, 14, designWidth - 48, designHeight - textBand - 26);
+      const fontSize = Math.max(28, Math.min(54, designWidth / Math.max(6, label.length * 0.62)));
+      drawLabel(designWidth / 2, designHeight - textBand / 2 - 6, designWidth - 36, fontSize);
+    } else {
+      const fontSize = Math.max(42, designWidth / Math.max(5.5, label.length * 0.58));
+      drawLabel(designWidth / 2, designHeight / 2, designWidth - 28, fontSize);
     }
     texture.needsUpdate = true;
   };
