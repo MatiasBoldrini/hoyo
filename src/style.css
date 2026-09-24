@@ -108,7 +108,7 @@ body.explore-hover canvas {
 #minimap {
   position: absolute;
   top: calc(14px + env(safe-area-inset-top));
-  right: calc(12px + env(safe-area-inset-right));
+  left: calc(12px + env(safe-area-inset-left));
   width: 132px;
   height: 132px;
   border-radius: 50%;
@@ -119,7 +119,7 @@ body.explore-hover canvas {
 
 #board {
   position: absolute;
-  top: calc(158px + env(safe-area-inset-top));
+  top: calc(14px + env(safe-area-inset-top));
   right: calc(12px + env(safe-area-inset-right));
   width: min(240px, 46vw);
   background: rgba(16, 20, 28, 0.48);
@@ -1848,7 +1848,7 @@ h2 {
   }
 
   #board {
-    top: calc(128px + env(safe-area-inset-top));
+    top: calc(14px + env(safe-area-inset-top));
     width: min(190px, 52vw);
   }
 

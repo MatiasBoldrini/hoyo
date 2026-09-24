@@ -1498,17 +1498,7 @@ export async function mountGame(canvas, hooks) {
     return meshes;
   }
 
-  function raycastExploreItem(clientX, clientY) {
-    const rect = canvas.getBoundingClientRect();
-    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    aimRay.setFromCamera(pointer, camera);
-    const reach = (scene.fog?.far ?? 380) + 40;
-    const markerHit = aimRay.intersectObjects([...brandMarkers.values()], true)[0];
-    const meshHit = aimRay.intersectObjects(explorePickMeshes(), false)[0];
-    const hit = [markerHit, meshHit]
-      .filter((entry) => entry && entry.distance <= reach)
-      .sort((a, b) => a.distance - b.distance)[0];
+  function marketItemFromHit(hit) {
     if (!hit) return null;
     if (hit.object.userData?.marketItem) return hit.object.userData.marketItem;
     if (Number.isInteger(hit.instanceId)) {
@@ -1516,6 +1506,25 @@ export async function mountGame(canvas, hooks) {
       return marketByTarget.get(record?.packedItems[hit.instanceId]) || null;
     }
     return marketByMesh.get(hit.object) || null;
+  }
+
+  function raycastExploreItem(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    aimRay.setFromCamera(pointer, camera);
+    const reach = (scene.fog?.far ?? 380) + 40;
+    const hits = [
+      ...aimRay.intersectObjects([...brandMarkers.values()], true),
+      ...aimRay.intersectObjects(explorePickMeshes(), false),
+    ]
+      .filter((entry) => entry.distance <= reach)
+      .sort((a, b) => a.distance - b.distance);
+    for (const hit of hits) {
+      const item = marketItemFromHit(hit);
+      if (item) return item;
+    }
+    return null;
   }
 
   function pickExploreItem(clientX, clientY) {
@@ -2189,7 +2198,7 @@ export async function mountGame(canvas, hooks) {
     );
     if (snap) camera.position.copy(desired);
     else camera.position.lerp(desired, 1 - Math.pow(0.0015, dt));
-    look.set(focus.x - sx * ahead, 0, focus.z - cz * ahead);
+    look.set(focus.x - sx * ahead, 2.6, focus.z - cz * ahead);
     camera.lookAt(look);
     camera.updateMatrixWorld();
     pitCam.value.copy(camera.position);
@@ -3117,6 +3126,9 @@ function buildBatches(scene, objects) {
     batch.receiveShadow = false;
     batch.frustumCulled = false;
     batch.count = 0;
+    // La esfera se calcula una sola vez. Si queda chica, al mover la cámara
+    // los edificios que entran en cuadro dejan de recibir el click.
+    batch.boundingSphere = new THREE.Sphere(new THREE.Vector3(), ISLAND * 4);
     const fade = new THREE.InstancedBufferAttribute(new Float32Array(list.length).fill(1), 1);
     fade.setUsage(THREE.DynamicDrawUsage);
     batch.geometry.setAttribute("aFade", fade);
