@@ -63,12 +63,21 @@ async function rpc(
     { method: "POST", body: JSON.stringify(body) },
   );
   if (!response.ok) {
+    let message = "Payment is not available.";
+    try {
+      const body = await response.json();
+      if (typeof body?.message === "string" && /already claimed/i.test(body.message)) {
+        message = "asset is already claimed";
+      }
+    } catch {
+      message = "Payment is not available.";
+    }
     console.error("Payment RPC failed", {
       rpc: name,
       status: response.status,
       requestId: response.headers.get("x-request-id"),
     });
-    throw new HttpError(409, "payment_not_available", "Payment is not available.");
+    throw new HttpError(409, "payment_not_available", message);
   }
   if (response.status === 204) return null;
   return await response.json();
@@ -88,6 +97,7 @@ export async function preparePayment(
     logoPath: string | null;
     color: string;
     animation: string;
+    design: Record<string, unknown> | null;
     idempotencyKey: string;
     expectedAssetVersion: number;
     ttlSeconds: number;
@@ -105,6 +115,7 @@ export async function preparePayment(
         p_logo_path: input.logoPath,
         p_color: input.color,
         p_animation: input.animation,
+        p_design: input.design,
         p_idempotency_key: input.idempotencyKey,
         p_expected_asset_version: input.expectedAssetVersion,
         p_ttl_seconds: input.ttlSeconds,

@@ -12,7 +12,6 @@ const SYNC_COPY = {
 };
 const MOVE_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD"];
 
-const priceFormat = new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", year: "numeric" });
 
 function safeUrl(value) {
@@ -216,7 +215,6 @@ export async function mountCityExplore(game) {
     .filter(Boolean);
   let store = null;
   let currentSession = null;
-  let claimAvailable = null;
   let selected = null;
   let draft = null;
   let saving = false;
@@ -565,7 +563,7 @@ export async function mountCityExplore(game) {
         : "Arrastrá tu marca sobre la pared.";
 
     owner.hidden = state !== "taken";
-    form.hidden = false;
+    form.hidden = state === "taken";
     if (state === "taken") {
       paintMark(ownerMark, record);
       ownerMark.textContent = record.logo ? "" : initials(record.company);
@@ -583,25 +581,18 @@ export async function mountCityExplore(game) {
     if (state === "mine") {
       const since = formatDate(record.createdAt);
       checkoutLabel.textContent = since ? "Reservado desde" : "Tu espacio";
-      checkoutPrice.textContent = since || priceFormat.format(record.price ?? item.price);
+      checkoutPrice.textContent = since || "Gratis";
       saveButton.textContent = "Guardar cambios";
     } else if (state === "taken") {
-      checkoutLabel.textContent = "Reemplazo seguro";
-      checkoutPrice.textContent = record.nextPrice ? priceFormat.format(record.nextPrice) : "Precio al confirmar";
-      saveButton.textContent = "Reemplazar marca";
+      checkoutLabel.textContent = "Ocupado";
+      checkoutPrice.textContent = "No disponible";
+      saveButton.textContent = "Lugar ocupado";
     } else {
-      checkoutLabel.textContent = claimAvailable === true ? "Claim vitalicio" : "Reserva segura";
-      checkoutPrice.textContent = claimAvailable === true ? priceFormat.format(0) : "Precio al confirmar";
-      saveButton.textContent = claimAvailable === true ? "Reclamar gratis" : "Reservar espacio";
+      checkoutLabel.textContent = "Precio";
+      checkoutPrice.textContent = "Gratis";
+      saveButton.textContent = "Crear lugar";
     }
-    const claimCopy =
-      claimAvailable === true
-        ? "Tu claim gratis vitalicio está disponible."
-        : claimAvailable === false
-          ? "Ya usaste tu claim gratis vitalicio. El servidor calculará el precio."
-          : currentSession?.user && !currentSession.user.is_anonymous
-            ? "El servidor confirmará elegibilidad y precio antes del checkout."
-            : "";
+    const claimCopy = state === "available" ? "Este lugar es gratis mientras nadie lo ocupe." : "";
     claimStatus.textContent = claimCopy;
     claimStatus.hidden = !claimCopy;
     saveButton.disabled = false;
@@ -786,26 +777,12 @@ export async function mountCityExplore(game) {
     refreshSelected(previousState);
   }
 
-  async function refreshClaimStatus() {
-    claimAvailable = null;
-    if (store && currentSession?.user && !currentSession.user.is_anonymous) {
-      try {
-        const status = await store.getClaimStatus();
-        claimAvailable = status.available;
-      } catch (error) {
-        console.warn("No se pudo consultar el claim gratis", error);
-      }
-    }
-    if (selected) renderListing();
-  }
-
   function renderSession(nextSession) {
     currentSession = nextSession;
     const email = nextSession?.user && !nextSession.user.is_anonymous ? nextSession.user.email : "";
     sessionLabel.textContent = email || "Sin sesión";
     logoutButton.hidden = !email;
     if (selected) renderListing();
-    refreshClaimStatus();
   }
 
   authSend.addEventListener("click", async () => {
@@ -1073,6 +1050,10 @@ export async function mountCityExplore(game) {
     }
     const previous = recordFor(selected);
     const wasMine = Boolean(previous?.mine);
+    if (previous && !wasMine) {
+      showError("Ese lugar ya está ocupado. Elegí uno libre.");
+      return;
+    }
     if (!store) {
       showError("No se puede publicar sin conexión al servidor.");
       return;
@@ -1085,19 +1066,13 @@ export async function mountCityExplore(game) {
     }
     saving = true;
     saveButton.disabled = true;
-    saveButton.textContent = wasMine ? "Guardando…" : "Reservando…";
+    saveButton.textContent = wasMine ? "Guardando…" : "Creando…";
     showError("");
     try {
       const record = { ...previewRecord(), company: draft.company.trim() };
       if (!wasMine) {
-        const checkoutUrl = await store.acquire(record, selected, previous);
-        if (checkoutUrl) {
-          setSyncLine("Redirigiendo al checkout seguro…");
-          window.location.assign(checkoutUrl);
-          return;
-        }
+        await store.acquire(record, selected, previous);
         await syncRecords();
-        await refreshClaimStatus();
         saving = false;
         flash("El espacio es tuyo. La marca quedó pendiente de revisión.");
         return;
@@ -1115,7 +1090,7 @@ export async function mountCityExplore(game) {
       saving = false;
       showError(error.message || "No pudimos guardar los cambios.");
       saveButton.disabled = false;
-      saveButton.textContent = wasMine ? "Guardar cambios" : "Reservar espacio";
+      saveButton.textContent = wasMine ? "Guardar cambios" : "Crear lugar";
     }
   });
 

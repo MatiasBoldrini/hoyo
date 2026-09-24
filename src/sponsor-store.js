@@ -24,6 +24,9 @@ function messageFor(error) {
     return "Ese lugar cambió de estado. Actualizá la ciudad e intentá de nuevo.";
   }
   if (error?.code === "42501") return "Tu sesión no está autorizada para realizar esa operación.";
+  if (/already claimed|already owns/i.test(error?.message || "")) {
+    return "Ese lugar ya está ocupado. Elegí uno libre.";
+  }
   return error?.message || "El servidor no pudo completar la operación.";
 }
 
@@ -90,20 +93,6 @@ function updateBrandingPayload(record, item, logoPath) {
     p_animation: "fixed",
     p_design: record.design || DEFAULT_DESIGN,
   };
-}
-
-function validCheckoutUrl(value) {
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "https:" &&
-      SPONSOR_CONTRACT.checkoutHosts.some(
-        (host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`),
-      )
-    );
-  } catch {
-    return false;
-  }
 }
 
 export async function connectSponsorStore() {
@@ -207,13 +196,19 @@ export async function connectSponsorStore() {
           cancel_url: `${location.origin}${location.pathname}?checkout=cancelled`,
         },
       });
-      throwIf(error);
-      sessionStorage.removeItem(retryKey);
-      if (data?.status === "completed" && data?.kind === "free_claim") return "";
-      if (!validCheckoutUrl(data?.checkoutUrl)) {
-        throw new Error("El servidor devolvió una URL de pago no permitida.");
+      if (error) {
+        let detail = error.message;
+        try {
+          const body = await error.context?.json?.();
+          detail = body?.message || body?.error || detail;
+        } catch {
+          detail = error.message;
+        }
+        throw new Error(messageFor({ message: detail }));
       }
-      return data.checkoutUrl;
+      sessionStorage.removeItem(retryKey);
+      if (data?.status === "completed") return data;
+      throw new Error("El servidor no confirmó el lugar gratis.");
     },
     async remove(record) {
       await requireUser();

@@ -22,6 +22,7 @@ Deno.serve(async (request) => {
       "logo_path",
       "color",
       "animation",
+      "design",
       "idempotency_key",
       "expected_asset_version",
       "success_url",
@@ -47,6 +48,7 @@ Deno.serve(async (request) => {
         (typeof body.logo_path !== "string" || body.logo_path.length > 550)) ||
       typeof body.color !== "string" ||
       typeof body.animation !== "string" ||
+      (body.design != null && (typeof body.design !== "object" || Array.isArray(body.design))) ||
       typeof body.idempotency_key !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
         .test(body.idempotency_key) ||
@@ -63,6 +65,7 @@ Deno.serve(async (request) => {
       logoPath: (body.logo_path as string | null | undefined) ?? null,
       color: body.color,
       animation: body.animation,
+      design: (body.design as Record<string, unknown> | null | undefined) ?? null,
       idempotencyKey: body.idempotency_key,
       expectedAssetVersion: Number(body.expected_asset_version),
       ttlSeconds: checkoutTtlSeconds(),
