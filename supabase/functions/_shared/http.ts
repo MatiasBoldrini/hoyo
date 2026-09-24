@@ -7,7 +7,7 @@ export function corsHeaders(origin: string | null): HeadersInit {
   return origin
     ? {
       "access-control-allow-origin": origin,
-      "access-control-allow-headers": "authorization, apikey, content-type",
+      "access-control-allow-headers": "authorization, x-client-info, apikey, content-type, x-retry-count",
       "access-control-allow-methods": "POST, OPTIONS",
       "access-control-max-age": "600",
       "vary": "Origin",

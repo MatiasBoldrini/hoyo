@@ -416,39 +416,62 @@ window.addEventListener("keydown", (event) => {
 const coarsePointer = window.matchMedia("(pointer: coarse), (hover: none)");
 const desktopHint = hint.textContent;
 let turnFrom = null;
+let turnPointer = null;
+let stickPointer = null;
+let stickX = 0;
+let stickY = 0;
+let passTap = false;
 
 function matchActive() {
   return cityExplore.hidden && menu.hidden && end.hidden && !hud.hidden;
 }
 
 window.addEventListener("pointerdown", (event) => {
-  if (!matchActive()) return;
-  if (event.target.closest("#joystick, button, a, input, select, textarea")) return;
+  if (passTap) return;
+  if (!controlActive()) return;
+  if (event.target.closest("button, a, input, select, textarea")) return;
   const mouseTurn = event.pointerType === "mouse" && event.button === 0;
-  const touchTurn = coarsePointer.matches && event.pointerType !== "mouse";
-  if (!mouseTurn && !touchTurn) return;
+  const touch = coarsePointer.matches && event.pointerType !== "mouse";
+  if (touch && stickPointer === null && beginStick(event)) {
+    event.stopPropagation();
+    return;
+  }
+  if (!mouseTurn && !(touch && stickPointer !== null && event.pointerId !== stickPointer)) return;
   turnFrom = event.clientX;
+  turnPointer = event.pointerId;
   document.body.classList.add("turning");
-});
+}, true);
 
 window.addEventListener("pointermove", (event) => {
-  if (!matchActive()) return;
-  if (turnFrom !== null) {
-    game.rotateCamera(-(event.clientX - turnFrom) * 0.006);
+  if (event.pointerId === stickPointer) {
+    event.preventDefault();
+    event.stopPropagation();
+    moveStick(event);
+    return;
+  }
+  if (!controlActive()) return;
+  if (turnFrom !== null && event.pointerId === turnPointer) {
+    game.rotateCamera((event.clientX - turnFrom) * 0.006);
     turnFrom = event.clientX;
     return;
   }
   if (coarsePointer.matches) return;
   game.setPointer(event.clientX, event.clientY);
-});
+}, true);
 
-function stopTurning() {
+function stopTurning(event) {
+  if (event?.pointerId === stickPointer) {
+    finishStick(event);
+    return;
+  }
+  if (event && turnPointer !== null && event.pointerId !== turnPointer) return;
   turnFrom = null;
+  turnPointer = null;
   document.body.classList.remove("turning");
 }
 window.addEventListener("pointerup", stopTurning);
 window.addEventListener("pointercancel", stopTurning);
-window.addEventListener("blur", stopTurning);
+window.addEventListener("blur", () => stopTurning());
 
 game.onEnd = (result) => {
   hud.hidden = true;
@@ -468,40 +491,57 @@ game.onPlayerDeath = () => {
 };
 
 const joystick = document.querySelector("#joystick");
-const joystickBase = joystick.querySelector(".joystick-base");
 const joystickKnob = joystick.querySelector(".joystick-knob");
 const exploreEditor = document.querySelector("#explore-editor");
 const exploreDirectory = document.querySelector("#explore-directory");
-let stickPointer = null;
+const STICK_MAX = 46;
+
+function controlActive() {
+  const exploring = !cityExplore.hidden && exploreEditor.hidden && exploreDirectory.hidden;
+  return matchActive() || exploring;
+}
 
 function releaseStick() {
   stickPointer = null;
+  stickX = 0;
+  stickY = 0;
+  joystick.hidden = true;
+  joystick.setAttribute("aria-hidden", "true");
   joystickKnob.style.transform = "translate(-50%, -50%)";
   game.setStick(0, 0);
 }
 
 function syncJoystick() {
-  const exploring = !cityExplore.hidden && exploreEditor.hidden && exploreDirectory.hidden;
-  const show = coarsePointer.matches && (matchActive() || exploring);
-  if (!show) releaseStick();
-  joystick.hidden = !show;
-  joystick.setAttribute("aria-hidden", show ? "false" : "true");
+  if (!controlActive()) releaseStick();
   hint.textContent = coarsePointer.matches
-    ? "Joystick para moverte · arrastrá para girar la cámara"
+    ? "Tocá y arrastrá para moverte · otro dedo gira la cámara"
     : desktopHint;
 }
 
+function beginStick(event) {
+  if (!coarsePointer.matches || !controlActive()) return false;
+  event.preventDefault();
+  stickPointer = event.pointerId;
+  stickX = event.clientX;
+  stickY = event.clientY;
+  joystick.style.left = `${event.clientX}px`;
+  joystick.style.top = `${event.clientY}px`;
+  joystick.hidden = false;
+  joystick.setAttribute("aria-hidden", "false");
+  joystickKnob.style.transform = "translate(-50%, -50%)";
+  game.setStick(0, 0);
+  return true;
+}
+
 function moveStick(event) {
-  const rect = joystickBase.getBoundingClientRect();
-  const dx = event.clientX - (rect.left + rect.width / 2);
-  const dy = event.clientY - (rect.top + rect.height / 2);
-  const max = rect.width * 0.34;
+  const dx = event.clientX - stickX;
+  const dy = event.clientY - stickY;
   const dist = Math.hypot(dx, dy);
-  const clamped = Math.min(dist, max);
+  const clamped = Math.min(dist, STICK_MAX);
   const nx = dist > 0 ? dx / dist : 0;
   const ny = dist > 0 ? dy / dist : 0;
   joystickKnob.style.transform = `translate(calc(-50% + ${nx * clamped}px), calc(-50% + ${ny * clamped}px))`;
-  const magnitude = max > 0 ? dist / max : 0;
+  const magnitude = dist / STICK_MAX;
   if (magnitude < 0.18) {
     game.setStick(0, 0);
     return;
@@ -510,29 +550,28 @@ function moveStick(event) {
   game.setStick(nx * gain, -ny * gain);
 }
 
-joystick.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  stickPointer = event.pointerId;
-  try {
-    joystick.setPointerCapture(event.pointerId);
-  } catch {
-    // El gesto sigue valiendo si el navegador no permite capturar el puntero.
-  }
-  moveStick(event);
-});
-joystick.addEventListener("pointermove", (event) => {
-  if (event.pointerId !== stickPointer) return;
-  event.preventDefault();
-  moveStick(event);
-});
-function endStick(event) {
-  if (event.pointerId !== stickPointer) return;
+function finishStick(event) {
+  const moved = Math.hypot(event.clientX - stickX, event.clientY - stickY);
+  const x = stickX;
+  const y = stickY;
+  const exploring = !cityExplore.hidden && exploreEditor.hidden && exploreDirectory.hidden;
   releaseStick();
+  if (moved > 12 || !exploring) return;
+  const canvas = document.querySelector("#view");
+  passTap = true;
+  for (const type of ["pointerdown", "pointerup"]) {
+    canvas.dispatchEvent(new PointerEvent(type, {
+      clientX: x,
+      clientY: y,
+      bubbles: true,
+      pointerId: 1,
+      pointerType: "touch",
+      button: 0,
+      isPrimary: true,
+    }));
+  }
+  passTap = false;
 }
-joystick.addEventListener("pointerup", endStick);
-joystick.addEventListener("pointercancel", endStick);
-joystick.addEventListener("lostpointercapture", endStick);
 
 const joystickWatch = new MutationObserver(syncJoystick);
 for (const node of [hud, menu, end, cityExplore, exploreEditor, exploreDirectory]) {

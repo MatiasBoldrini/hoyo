@@ -2715,7 +2715,7 @@ export async function mountGame(canvas, hooks) {
     },
     rotateExplore(deltaX, deltaY = 0) {
       if (exploreFocused || exploreReturning) return;
-      exploreYaw -= deltaX * 0.0022;
+      exploreYaw += deltaX * 0.0022;
       explorePitch = THREE.MathUtils.clamp(
         explorePitch - deltaY * 0.0022,
         EXPLORE_PITCH_MIN,
@@ -2724,7 +2724,7 @@ export async function mountGame(canvas, hooks) {
     },
     orbitExplore(deltaX, deltaY = 0) {
       if (!exploreFocused || exploreReturning) return;
-      const angle = -deltaX * 0.0032;
+      const angle = deltaX * 0.0032;
       const x = exploreFocusDirection.x;
       const z = exploreFocusDirection.z;
       const horizontal = Math.hypot(x, z) || 1;

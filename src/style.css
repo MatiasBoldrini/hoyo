@@ -3118,12 +3118,14 @@ h2 {
 
 .joystick {
   position: fixed;
-  left: calc(16px + env(safe-area-inset-left));
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: 0;
+  top: 0;
   z-index: 14;
   width: 128px;
   height: 128px;
+  transform: translate(-50%, -50%);
   touch-action: none;
+  pointer-events: none;
 }
 
 .joystick-base {
@@ -3163,13 +3165,8 @@ h2 {
   }
 
   .explore-help {
-    left: calc(156px + env(safe-area-inset-left));
-    right: auto;
-    bottom: calc(52px + env(safe-area-inset-bottom));
-    width: max-content;
-    max-width: calc(100vw - 180px - env(safe-area-inset-left));
-    transform: none;
-    white-space: nowrap;
+    bottom: calc(22px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 24px);
   }
 
   .explore-help > span:not(.help-mobile) {
