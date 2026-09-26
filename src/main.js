@@ -38,6 +38,13 @@ function paintSwatch() {
   swatch.style.background = colorHex(color);
 }
 
+function syncMenuColor() {
+  paintSwatch();
+  for (const node of colors.children) {
+    node.classList.toggle("on", Number(node.dataset.color) === color);
+  }
+}
+
 function placeColors() {
   const anchor = swatch.getBoundingClientRect();
   const pop = colors.getBoundingClientRect();
@@ -66,20 +73,19 @@ for (const value of PLAYER_COLORS) {
   button.type = "button";
   button.style.background = colorHex(value);
   button.setAttribute("aria-label", "Color");
+  button.dataset.color = String(value);
   button.classList.toggle("on", value === color);
   button.addEventListener("click", (event) => {
     event.stopPropagation();
     color = value;
     localStorage.setItem("hoyo-color", String(value));
-    for (const node of colors.children) node.classList.remove("on");
-    button.classList.add("on");
-    paintSwatch();
+    syncMenuColor();
     setColorsOpen(false);
   });
   colors.append(button);
 }
 
-paintSwatch();
+syncMenuColor();
 
 document.addEventListener("pointerdown", (event) => {
   if (colors.hidden) return;
@@ -122,9 +128,21 @@ mountCityExplore(game);
 const partyController = mountParty({
   getProfile() {
     return {
-      name: nick.value.trim().slice(0, 12) || "Jugador",
+      name: nick.value.trim().slice(0, 12),
       color,
     };
+  },
+  onProfileChange(profile) {
+    const name = String(profile?.name || "").trim().slice(0, 12);
+    nick.value = name;
+    if (name) localStorage.setItem("hoyo-name", name);
+    else localStorage.removeItem("hoyo-name");
+    const next = Number(profile?.color);
+    if (PLAYER_COLORS.includes(next)) {
+      color = next;
+      localStorage.setItem("hoyo-color", String(color));
+      syncMenuColor();
+    }
   },
   onOpen() {
     menu.hidden = true;

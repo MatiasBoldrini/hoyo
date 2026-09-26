@@ -236,6 +236,9 @@ export async function connectPartyStore() {
         sendRoom(nextRoom) {
           return channel.send({ type: "broadcast", event: "room", payload: nextRoom });
         },
+        updateProfile(profile) {
+          return channel.track(profile);
+        },
         async leave() {
           await channel.untrack();
           await supabase.removeChannel(channel);

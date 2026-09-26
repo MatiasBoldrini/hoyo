@@ -82,8 +82,20 @@
           <h2>Party</h2>
         </header>
 
+        <p id="party-lead" class="party-lead">Una sala privada. El link dura una hora.</p>
+        <div id="party-you" class="party-you">
+          <label class="party-you-label" for="party-name">Tu nombre</label>
+          <input
+            id="party-name"
+            class="party-name"
+            maxlength="12"
+            autocomplete="nickname"
+            placeholder="Jugador"
+          />
+          <div id="party-colors" class="party-colors" role="radiogroup" aria-label="Elegir color"></div>
+        </div>
+
         <form id="party-setup">
-          <p class="party-lead">Una sala privada. El link dura una hora.</p>
           <div class="party-group">
             <label class="party-setting">
               <span>Duración</span>
@@ -115,6 +127,11 @@
           </div>
           <p id="party-error" class="party-error" hidden></p>
           <button id="party-create" class="party-primary" type="submit">Crear party</button>
+        </form>
+
+        <form id="party-join" hidden>
+          <p id="party-join-error" class="party-error" hidden></p>
+          <button id="party-join-go" class="party-primary" type="submit">Entrar a la party</button>
         </form>
 
         <div id="party-lobby" hidden>

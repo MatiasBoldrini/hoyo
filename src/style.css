@@ -542,11 +542,77 @@ h2 {
 }
 
 .party-lead {
-  margin: 10px 0 28px;
+  margin: 10px 0 16px;
   color: #6e6e73;
   font-size: 17px;
   font-weight: 400;
   line-height: 1.4;
+}
+
+.party-you {
+  margin: 0 0 22px;
+}
+
+.party-you-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #6e6e73;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.party-name {
+  width: 100%;
+  border: 0;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #1d1d1f;
+  font: 500 17px/1.2 inherit;
+  letter-spacing: -0.01em;
+  background: #f5f5f7;
+  outline: none;
+}
+
+.party-name::placeholder {
+  color: #aeaeb2;
+}
+
+.party-name:focus {
+  box-shadow: inset 0 0 0 2px #0071e3;
+}
+
+.party-name:disabled {
+  opacity: 0.55;
+}
+
+.party-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.party-colors button {
+  width: 32px;
+  height: 32px;
+  border: 2px solid white;
+  border-radius: 50%;
+  padding: 0;
+  box-shadow: 0 0 0 1px #d2d2d7;
+  cursor: pointer;
+}
+
+.party-colors button[aria-checked="true"] {
+  box-shadow: 0 0 0 2px #1d1d1f;
+}
+
+.party-colors button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+#party-join .party-primary {
+  margin-top: 6px;
 }
 
 .party-group {

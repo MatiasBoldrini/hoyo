@@ -1,8 +1,15 @@
-import { connectPartyStore, partyStoreEnabled } from "./party-store.js";
+import { PLAYER_COLORS } from "./game.js";
+import { connectPartyStore, normalizePartyCode, partyStoreEnabled } from "./party-store.js";
 
 const panel = document.querySelector("#party");
 const closeButton = document.querySelector("#party-close");
+const leadNode = document.querySelector("#party-lead");
+const nameInput = document.querySelector("#party-name");
+const colorNodes = document.querySelector("#party-colors");
 const setup = document.querySelector("#party-setup");
+const joinForm = document.querySelector("#party-join");
+const joinButton = document.querySelector("#party-join-go");
+const joinError = document.querySelector("#party-join-error");
 const lobby = document.querySelector("#party-lobby");
 const durationInput = document.querySelector("#party-duration");
 const botsInput = document.querySelector("#party-bots");
@@ -20,6 +27,17 @@ const startButton = document.querySelector("#party-start");
 
 const MAX_PEOPLE = 8;
 const refillNames = ["Normal", "Abundante", "Caos"];
+let selectedColor = PLAYER_COLORS[0];
+
+for (const value of PLAYER_COLORS) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.color = String(value);
+  button.style.background = `#${value.toString(16).padStart(6, "0")}`;
+  button.setAttribute("role", "radio");
+  button.setAttribute("aria-label", "Color");
+  colorNodes.append(button);
+}
 
 function inviteUrl(code) {
   const url = new URL(window.location.href);
@@ -42,21 +60,97 @@ function messageFrom(error) {
   return error?.message || "No se pudo conectar la party.";
 }
 
-export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }) {
+export function mountParty({ getProfile, onProfileChange, onOpen, onClose, onStart, onGameState }) {
   let store = null;
   let room = null;
   let connection = null;
   let people = [];
   let opening = false;
   let inGame = false;
+  let joinedAt = 0;
+  let pendingCode = "";
   let startTimer = 0;
   let expiryTimer = 0;
   let statusPoll = 0;
+  let profileTimer = 0;
+
+  function paintColors() {
+    for (const button of colorNodes.children) {
+      const on = Number(button.dataset.color) === selectedColor;
+      button.setAttribute("aria-checked", on ? "true" : "false");
+    }
+  }
+
+  function setIdentityLocked(locked) {
+    nameInput.disabled = locked;
+    for (const button of colorNodes.children) button.disabled = locked;
+  }
+
+  function seedIdentity() {
+    const profile = getProfile() || {};
+    nameInput.value = String(profile.name || "").trim().slice(0, 12);
+    const next = Number(profile.color);
+    selectedColor = PLAYER_COLORS.includes(next) ? next : PLAYER_COLORS[0];
+    paintColors();
+    setIdentityLocked(false);
+  }
+
+  function commitDraft() {
+    const name = nameInput.value.trim().slice(0, 12);
+    onProfileChange?.({ name, color: selectedColor });
+    return { name: name || "Jugador", color: selectedColor };
+  }
+
+  function pushProfile() {
+    if (!connection || !room || room.status !== "lobby" || isExpired()) return;
+    const profile = { ...commitDraft(), joinedAt };
+    const me = people.find((person) => person.id === store?.userId);
+    if (me) {
+      me.name = profile.name;
+      me.color = profile.color;
+      renderRoom();
+    }
+    connection.updateProfile(profile)?.catch(() => {});
+  }
+
+  function scheduleProfilePush() {
+    window.clearTimeout(profileTimer);
+    profileTimer = window.setTimeout(() => {
+      profileTimer = 0;
+      pushProfile();
+    }, 200);
+  }
+
+  function showScreen(screen) {
+    setup.hidden = screen !== "setup";
+    joinForm.hidden = screen !== "join";
+    lobby.hidden = screen !== "lobby";
+    if (screen === "join") {
+      leadNode.hidden = false;
+      leadNode.textContent = pendingCode
+        ? `Te unís a ${pendingCode}. Elegí tu nombre y color antes de entrar.`
+        : "Elegí tu nombre y color antes de entrar.";
+    } else if (screen === "setup") {
+      leadNode.hidden = false;
+      leadNode.textContent = "Una sala privada. El link dura una hora.";
+    } else {
+      leadNode.hidden = true;
+    }
+  }
 
   function showError(error) {
-    errorNode.textContent = messageFrom(error);
-    errorNode.hidden = false;
-    statusNode.textContent = messageFrom(error);
+    const text = messageFrom(error);
+    if (!joinForm.hidden) {
+      joinError.textContent = text;
+      joinError.hidden = false;
+      return;
+    }
+    if (!setup.hidden) {
+      errorNode.textContent = text;
+      errorNode.hidden = false;
+      return;
+    }
+    statusNode.textContent = text;
   }
 
   function isHost() {
@@ -141,6 +235,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     }
     startButton.hidden = !isHost() || room.status !== "lobby";
     startButton.disabled = ordered.length === 0 || isExpired();
+    setIdentityLocked(room.status !== "lobby" || isExpired());
     renderExpiry();
   }
 
@@ -206,11 +301,12 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     if (connection) await connection.leave();
     room = nextRoom;
     people = [];
-    const profile = getProfile();
+    joinedAt = Date.now();
+    const profile = commitDraft();
     try {
       connection = await store.subscribe(
         room,
-        { name: profile.name, color: profile.color, joinedAt: Date.now() },
+        { name: profile.name, color: profile.color, joinedAt },
         {
           onPeople(nextPeople) {
             people = nextPeople;
@@ -231,8 +327,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
       room = null;
       throw error;
     }
-    setup.hidden = true;
-    lobby.hidden = false;
+    showScreen("lobby");
     history.replaceState(null, "", new URL(inviteUrl(room.code)));
     renderRoom();
     scheduleStart();
@@ -257,33 +352,40 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     opening = true;
     onOpen();
     panel.hidden = false;
-    lobby.hidden = true;
-    setup.hidden = false;
     errorNode.hidden = true;
-    createButton.disabled = true;
-    try {
-      await ensureStore();
-      if (code) {
-        statusNode.textContent = "Entrando a la party…";
-        const nextRoom = await store.find(code);
-        if (!nextRoom) throw new Error("La party no existe o el link ya venció.");
-        await enter(nextRoom);
+    joinError.hidden = true;
+    createButton.disabled = false;
+    joinButton.disabled = false;
+    joinButton.textContent = "Entrar a la party";
+    seedIdentity();
+    if (code) {
+      pendingCode = normalizePartyCode(code);
+      showScreen("join");
+      if (!/^[A-Z2-9]{8}$/.test(pendingCode)) {
+        showError(new Error("La party no existe o el link ya venció."));
       }
-    } catch (error) {
-      showError(error);
-    } finally {
-      createButton.disabled = false;
-      opening = false;
+      window.setTimeout(() => {
+        nameInput.focus();
+        nameInput.select();
+      }, 0);
+    } else {
+      pendingCode = "";
+      showScreen("setup");
     }
+    opening = false;
   }
 
   async function leave({ showMenu = true } = {}) {
     window.clearTimeout(startTimer);
+    window.clearTimeout(profileTimer);
     window.clearInterval(expiryTimer);
     window.clearInterval(statusPoll);
     startTimer = 0;
+    profileTimer = 0;
     expiryTimer = 0;
     statusPoll = 0;
+    pendingCode = "";
+    joinedAt = 0;
     if (connection) await connection.leave();
     connection = null;
     room = null;
@@ -298,6 +400,7 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     event.preventDefault();
     createButton.disabled = true;
     errorNode.hidden = true;
+    commitDraft();
     try {
       await ensureStore();
       const created = await store.create({
@@ -313,7 +416,49 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     }
   });
 
+  joinForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!pendingCode || joinButton.disabled) return;
+    joinButton.disabled = true;
+    joinButton.textContent = "Entrando…";
+    joinError.hidden = true;
+    commitDraft();
+    try {
+      await ensureStore();
+      const nextRoom = await store.find(pendingCode);
+      if (!nextRoom) throw new Error("La party no existe o el link ya venció.");
+      await enter(nextRoom);
+    } catch (error) {
+      showError(error);
+      joinButton.textContent = "Entrar a la party";
+    } finally {
+      joinButton.disabled = false;
+    }
+  });
+
   closeButton.addEventListener("click", () => leave());
+
+  nameInput.addEventListener("input", () => {
+    commitDraft();
+    scheduleProfilePush();
+  });
+
+  nameInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (!joinForm.hidden) joinForm.requestSubmit();
+    else if (!setup.hidden) setup.requestSubmit();
+  });
+
+  for (const button of colorNodes.children) {
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      selectedColor = Number(button.dataset.color);
+      paintColors();
+      commitDraft();
+      pushProfile();
+    });
+  }
 
   copyButton.addEventListener("click", async () => {
     if (!room) return;
@@ -332,6 +477,8 @@ export function mountParty({ getProfile, onOpen, onClose, onStart, onGameState }
     if (!room || !isHost() || isExpired()) return;
     startButton.disabled = true;
     statusNode.textContent = "Iniciando…";
+    window.clearTimeout(profileTimer);
+    pushProfile();
     try {
       room = await store.start(room.id);
       connection?.sendRoom(room);
